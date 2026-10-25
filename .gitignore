@@ -1,0 +1,35 @@
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Результати збірки
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+publish/
+*.exe
+*.dll
+*.pdb
+
+# NuGet
+packages/
+*.nupkg
+
+# Тести та тимчасові файли
+TestResults/
+*.log
+*.tmp
+
+# ReSharper / Rider / VS Code
+_ReSharper*/
+.idea/
+.vscode/
+
+# Збереження гри під час розробки
+save.json
