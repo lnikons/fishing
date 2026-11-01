@@ -23,7 +23,15 @@ namespace Fishing
         private int castPower;
         private int castDirection = 1;
 
+        // Стан поклювання
+        private bool isBiting;
+        private int score;
+        private string statusText = "";
+        private readonly Random rng = new Random();
+
         private readonly System.Windows.Forms.Timer tmrCast = new System.Windows.Forms.Timer { Interval = 16 };
+        private readonly System.Windows.Forms.Timer tmrBite = new System.Windows.Forms.Timer();
+        private readonly System.Windows.Forms.Timer tmrReaction = new System.Windows.Forms.Timer { Interval = 1500 };
 
         public Form1()
         {
@@ -36,6 +44,9 @@ namespace Fishing
             floatTarget = rodTip;
 
             tmrCast.Tick += TmrCast_Tick;
+            tmrBite.Tick += TmrBite_Tick;
+            tmrReaction.Tick += TmrReaction_Tick;
+
             pnlGame.MouseDown += PnlGame_MouseDown;
             pnlGame.MouseUp += PnlGame_MouseUp;
         }
@@ -54,7 +65,25 @@ namespace Fishing
 
         private void PnlGame_MouseDown(object sender, MouseEventArgs e)
         {
-            if (e.Button != MouseButtons.Left || isFlying)
+            if (e.Button != MouseButtons.Left)
+            {
+                return;
+            }
+
+            // Клік у вікні реакції: підсічення
+            if (isBiting)
+            {
+                tmrReaction.Stop();
+                isBiting = false;
+                score += 1;
+                UpdateScore(score);
+                statusText = "Підсічено!";
+                pnlGame.Invalidate();
+                return;
+            }
+
+            // Поки поплавець летить або чекає поклювання, закидати не можна
+            if (isFlying || tmrBite.Enabled)
             {
                 return;
             }
@@ -62,6 +91,7 @@ namespace Fishing
             isCharging = true;
             castPower = 0;
             castDirection = 1;
+            statusText = "";
             tmrCast.Start();
         }
 
@@ -84,6 +114,30 @@ namespace Fishing
             floatTarget = new PointF(rodTip.X + distance, pnlGame.Height - 100);
             isFlying = true;
             tmrCast.Start();
+        }
+
+        private void StartBiteWait()
+        {
+            // Випадковий час очікування від 2 до 5 секунд
+            tmrBite.Interval = rng.Next(2000, 5001);
+            tmrBite.Start();
+        }
+
+        private void TmrBite_Tick(object sender, EventArgs e)
+        {
+            tmrBite.Stop();
+            isBiting = true;
+            tmrReaction.Start();
+            pnlGame.Invalidate();
+        }
+
+        private void TmrReaction_Tick(object sender, EventArgs e)
+        {
+            // Вікно реакції минуло без кліку
+            tmrReaction.Stop();
+            isBiting = false;
+            statusText = "Риба втекла";
+            pnlGame.Invalidate();
         }
 
         private void TmrCast_Tick(object sender, EventArgs e)
@@ -115,6 +169,7 @@ namespace Fishing
                     floatPos = floatTarget;
                     isFlying = false;
                     tmrCast.Stop();
+                    StartBiteWait();
                 }
                 else
                 {
@@ -141,11 +196,29 @@ namespace Fishing
             e.Graphics.FillEllipse(Brushes.Red, floatPos.X - 6, floatPos.Y - 6, 12, 12);
             e.Graphics.FillEllipse(Brushes.White, floatPos.X - 3, floatPos.Y - 3, 6, 6);
 
+            // Знак поклювання над поплавцем
+            if (isBiting)
+            {
+                using (var alertFont = new Font("Segoe UI", 20F, FontStyle.Bold))
+                {
+                    e.Graphics.DrawString("!", alertFont, Brushes.Red, floatPos.X - 8, floatPos.Y - 55);
+                }
+            }
+
             // Шкала сили закидання
             if (isCharging)
             {
                 e.Graphics.DrawRectangle(Pens.Black, 20, pnlGame.Height - 40, 200, 16);
                 e.Graphics.FillRectangle(Brushes.OrangeRed, 21, pnlGame.Height - 39, castPower * 2 - 1 < 0 ? 0 : castPower * 2 - 1, 14);
+            }
+
+            // Повідомлення про результат
+            if (!string.IsNullOrEmpty(statusText))
+            {
+                using (var statusFont = new Font("Segoe UI", 14F, FontStyle.Bold))
+                {
+                    e.Graphics.DrawString(statusText, statusFont, Brushes.Black, 20, 20);
+                }
             }
         }
     }
