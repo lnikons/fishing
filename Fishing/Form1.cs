@@ -15,6 +15,26 @@ namespace Fishing
         public Form1()
         {
             InitializeComponent();
+
+            btnPlay.Click += (s, e) => ShowPanel(pnlGame);
+            btnExit.Click += (s, e) => Close();
+        }
+
+        private void ShowPanel(Panel panel)
+        {
+            pnlMenu.Visible = false;
+            pnlGame.Visible = false;
+            panel.Visible = true;
+        }
+
+        public void UpdateScore(int points)
+        {
+            lblScore.Text = $"Бали: {points}";
+        }
+
+        private void pnlGame_Paint(object sender, PaintEventArgs e)
+        {
+
         }
     }
 }
