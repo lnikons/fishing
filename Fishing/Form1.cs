@@ -29,12 +29,12 @@ namespace Fishing
         private string statusText = "";
         private readonly Random rng = new Random();
 
-        // Мініграша на утримання
+        // Міні-гра на утримання
         private bool isFighting;
         private bool isHolding;
         private float playerPos;      // позиція маркера на смузі, 0–100 знизу вгору
         private float fightProgress;  // прогрес вилову, 0–100
-        private int fightElapsed;     // мс від початку мініграші
+        private int fightElapsed;     // мс від початку міні-гри
         private const float ZoneLow = 40f;
         private const float ZoneHigh = 65f;
         private const int FightTimeLimit = 12000;
@@ -82,14 +82,14 @@ namespace Fishing
                 return;
             }
 
-            // Під час мініграші утримання тримає маркер вгорі
+            // Під час міні-гри утримання тримає маркер вгорі
             if (isFighting)
             {
                 isHolding = true;
                 return;
             }
 
-            // Клік у вікні реакції: підсічення і старт мініграші
+            // Клік у вікні реакції: підсічення і старт міні-гри
             if (isBiting)
             {
                 tmrReaction.Stop();
@@ -289,7 +289,7 @@ namespace Fishing
                 e.Graphics.FillRectangle(Brushes.OrangeRed, 21, pnlGame.Height - 39, castPower * 2 - 1 < 0 ? 0 : castPower * 2 - 1, 14);
             }
 
-            // Мініграша: смуга з зеленою зоною і маркером, та шкала прогресу поруч
+            // Міні-гра: смуга з зеленою зоною і маркером, та шкала прогресу поруч
             if (isFighting)
             {
                 DrawFightBar(e.Graphics);
