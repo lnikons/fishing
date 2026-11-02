@@ -29,9 +29,20 @@ namespace Fishing
         private string statusText = "";
         private readonly Random rng = new Random();
 
+        // Мініграша на утримання
+        private bool isFighting;
+        private bool isHolding;
+        private float playerPos;      // позиція маркера на смузі, 0–100 знизу вгору
+        private float fightProgress;  // прогрес вилову, 0–100
+        private int fightElapsed;     // мс від початку мініграші
+        private const float ZoneLow = 40f;
+        private const float ZoneHigh = 65f;
+        private const int FightTimeLimit = 12000;
+
         private readonly System.Windows.Forms.Timer tmrCast = new System.Windows.Forms.Timer { Interval = 16 };
         private readonly System.Windows.Forms.Timer tmrBite = new System.Windows.Forms.Timer();
         private readonly System.Windows.Forms.Timer tmrReaction = new System.Windows.Forms.Timer { Interval = 1500 };
+        private readonly System.Windows.Forms.Timer tmrFight = new System.Windows.Forms.Timer { Interval = 16 };
 
         public Form1()
         {
@@ -46,6 +57,7 @@ namespace Fishing
             tmrCast.Tick += TmrCast_Tick;
             tmrBite.Tick += TmrBite_Tick;
             tmrReaction.Tick += TmrReaction_Tick;
+            tmrFight.Tick += TmrFight_Tick;
 
             pnlGame.MouseDown += PnlGame_MouseDown;
             pnlGame.MouseUp += PnlGame_MouseUp;
@@ -70,14 +82,21 @@ namespace Fishing
                 return;
             }
 
-            // Клік у вікні реакції: підсічення
+            // Під час мініграші утримання тримає маркер вгорі
+            if (isFighting)
+            {
+                isHolding = true;
+                return;
+            }
+
+            // Клік у вікні реакції: підсічення і старт мініграші
             if (isBiting)
             {
                 tmrReaction.Stop();
                 isBiting = false;
                 score += 1;
                 UpdateScore(score);
-                statusText = "Підсічено!";
+                StartFight();
                 pnlGame.Invalidate();
                 return;
             }
@@ -97,7 +116,18 @@ namespace Fishing
 
         private void PnlGame_MouseUp(object sender, MouseEventArgs e)
         {
-            if (e.Button != MouseButtons.Left || !isCharging)
+            if (e.Button != MouseButtons.Left)
+            {
+                return;
+            }
+
+            if (isFighting)
+            {
+                isHolding = false;
+                return;
+            }
+
+            if (!isCharging)
             {
                 return;
             }
@@ -123,6 +153,26 @@ namespace Fishing
             tmrBite.Start();
         }
 
+        private void StartFight()
+        {
+            isFighting = true;
+            isHolding = false;
+            playerPos = 30f;
+            fightProgress = 30f;
+            fightElapsed = 0;
+            statusText = "Риба на гачку!";
+            tmrFight.Start();
+        }
+
+        private void EndFight(bool caught)
+        {
+            tmrFight.Stop();
+            isFighting = false;
+            isHolding = false;
+            statusText = caught ? "Зловлено!" : "Риба втекла";
+            pnlGame.Invalidate();
+        }
+
         private void TmrBite_Tick(object sender, EventArgs e)
         {
             tmrBite.Stop();
@@ -138,6 +188,33 @@ namespace Fishing
             isBiting = false;
             statusText = "Риба втекла";
             pnlGame.Invalidate();
+        }
+
+        private void TmrFight_Tick(object sender, EventArgs e)
+        {
+            // Маркер піднімається під час утримання і падає, коли кнопку відпущено
+            playerPos += isHolding ? 1.2f : -0.9f;
+            playerPos = Math.Max(0f, Math.Min(100f, playerPos));
+
+            // Прогрес росте, поки маркер у зеленій зоні, і падає поза нею
+            bool inZone = playerPos >= ZoneLow && playerPos <= ZoneHigh;
+            fightProgress += inZone ? 0.4f : -0.25f;
+            fightProgress = Math.Max(0f, Math.Min(100f, fightProgress));
+
+            fightElapsed += tmrFight.Interval;
+
+            if (fightProgress >= 100f)
+            {
+                EndFight(true);
+            }
+            else if (fightProgress <= 0f || fightElapsed >= FightTimeLimit)
+            {
+                EndFight(false);
+            }
+            else
+            {
+                pnlGame.Invalidate();
+            }
         }
 
         private void TmrCast_Tick(object sender, EventArgs e)
@@ -212,6 +289,12 @@ namespace Fishing
                 e.Graphics.FillRectangle(Brushes.OrangeRed, 21, pnlGame.Height - 39, castPower * 2 - 1 < 0 ? 0 : castPower * 2 - 1, 14);
             }
 
+            // Мініграша: смуга з зеленою зоною і маркером, та шкала прогресу поруч
+            if (isFighting)
+            {
+                DrawFightBar(e.Graphics);
+            }
+
             // Повідомлення про результат
             if (!string.IsNullOrEmpty(statusText))
             {
@@ -220,6 +303,35 @@ namespace Fishing
                     e.Graphics.DrawString(statusText, statusFont, Brushes.Black, 20, 20);
                 }
             }
+        }
+
+        private void DrawFightBar(Graphics g)
+        {
+            const int barWidth = 30;
+            const int barHeight = 300;
+            const int barTop = 60;
+            int barLeft = pnlGame.Width - 80;
+
+            // Фон смуги
+            g.FillRectangle(Brushes.White, barLeft, barTop, barWidth, barHeight);
+
+            // Зелена зона: значення 100 — верх смуги, 0 — низ
+            float zoneTop = barTop + (100f - ZoneHigh) / 100f * barHeight;
+            float zoneBottom = barTop + (100f - ZoneLow) / 100f * barHeight;
+            g.FillRectangle(Brushes.LightGreen, barLeft, zoneTop, barWidth, zoneBottom - zoneTop);
+
+            // Рамка смуги
+            g.DrawRectangle(Pens.Black, barLeft, barTop, barWidth, barHeight);
+
+            // Маркер гравця
+            float markerY = barTop + (100f - playerPos) / 100f * barHeight;
+            g.FillRectangle(Brushes.Black, barLeft - 4, markerY - 3, barWidth + 8, 6);
+
+            // Шкала прогресу зліва від смуги, заповнюється знизу вгору
+            int progressLeft = barLeft - 30;
+            g.DrawRectangle(Pens.Black, progressLeft, barTop, 16, barHeight);
+            float fillHeight = fightProgress / 100f * barHeight;
+            g.FillRectangle(Brushes.Gold, progressLeft + 1, barTop + barHeight - fillHeight, 14, fillHeight);
         }
     }
 }
