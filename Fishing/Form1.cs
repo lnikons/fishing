@@ -33,6 +33,7 @@ namespace Fishing
         // Міні-гра на утримання
         private bool isFighting;
         private bool isHolding;
+        private bool spaceDown;       // пробіл зараз утримується
         private float playerPos;      // центр зеленої зони на смузі, 0–100 знизу вгору
         private float fightProgress;  // прогрес вилову, 0–100
         private int fightElapsed;     // мс від початку міні-гри
@@ -42,10 +43,17 @@ namespace Fishing
         private const float ZoneHalfSize = 12.5f;
         private const int FightTimeLimit = 12000;
 
-        // Ресурси для малювання: створюються один раз, а не в кожному кадрі
+        // Масштаб екрана: 1.0 при 100%, 1.25 при 125% і т. д.
+        // Гра малюється в логічних пікселях (як при 100%), а Graphics масштабує їх під екран.
+        private float DpiScale => DeviceDpi / 96f;
+        private float LogicalWidth => pnlGame.ClientSize.Width / DpiScale;
+        private float LogicalHeight => pnlGame.ClientSize.Height / DpiScale;
+
+        // Ресурси для малювання: створюються один раз, а не в кожному кадрі.
+        // Шрифти в пікселях, щоб масштаб не застосувався до них двічі.
         private readonly Pen rodPen = new Pen(Color.SaddleBrown, 3);
-        private readonly Font alertFont = new Font("Segoe UI", 20F, FontStyle.Bold);
-        private readonly Font statusFont = new Font("Segoe UI", 14F, FontStyle.Bold);
+        private readonly Font alertFont = new Font("Segoe UI", 27F, FontStyle.Bold, GraphicsUnit.Pixel);
+        private readonly Font statusFont = new Font("Segoe UI", 19F, FontStyle.Bold, GraphicsUnit.Pixel);
 
         private readonly System.Windows.Forms.Timer tmrCast = new System.Windows.Forms.Timer { Interval = 16 };
         private readonly System.Windows.Forms.Timer tmrBite = new System.Windows.Forms.Timer();
@@ -55,6 +63,20 @@ namespace Fishing
         public Form1()
         {
             InitializeComponent();
+
+            // Фіксований розмір вікна: не можна тягнути краї і розгортати
+            FormBorderStyle = FormBorderStyle.FixedSingle;
+            MaximizeBox = false;
+
+            // Панелі займають всю область під написом монет
+            pnlMenu.Size = new Size(ClientSize.Width, ClientSize.Height - pnlMenu.Top);
+            pnlGame.Size = new Size(ClientSize.Width, ClientSize.Height - pnlGame.Top);
+
+            // Клавіатура: пробіл дублює ЛКМ
+            KeyPreview = true;
+            KeyDown += Form1_KeyDown;
+            KeyUp += Form1_KeyUp;
+            Deactivate += (s, e) => ReleaseAllInput();
 
             btnPlay.Click += (s, e) => ShowPanel(pnlGame);
             btnExit.Click += (s, e) => Close();
@@ -70,6 +92,8 @@ namespace Fishing
             // Подвійне буферизування прибирає мерехтіння при малюванні
             EnableDoubleBuffering(pnlGame);
 
+            // Малювання підключено в коді, щоб дизайнер його не загубив
+            pnlGame.Paint += pnlGame_Paint;
             pnlGame.MouseDown += PnlGame_MouseDown;
             pnlGame.MouseUp += PnlGame_MouseUp;
         }
@@ -86,6 +110,7 @@ namespace Fishing
             pnlMenu.Visible = false;
             pnlGame.Visible = false;
             panel.Visible = true;
+            ActiveControl = null;
         }
 
         public void UpdateScore(int points)
@@ -95,11 +120,74 @@ namespace Fishing
 
         private void PnlGame_MouseDown(object sender, MouseEventArgs e)
         {
-            if (e.Button != MouseButtons.Left)
+            if (e.Button == MouseButtons.Left)
             {
-                return;
+                HandlePress();
             }
+        }
 
+        private void PnlGame_MouseUp(object sender, MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                HandleRelease();
+            }
+        }
+
+        private void Form1_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Space)
+            {
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+
+                // Автоповтор утриманої клавіші не повинен знову запускати дію
+                if (!spaceDown && pnlGame.Visible)
+                {
+                    spaceDown = true;
+                    HandlePress();
+                }
+            }
+            else if (e.KeyCode == Keys.Menu || e.KeyCode == Keys.F10)
+            {
+                // Alt і F10 вмикають режим меню вікна, який з'їдає наступне введення
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+        }
+
+        private void Form1_KeyUp(object sender, KeyEventArgs e)
+        {
+            if (e.KeyCode == Keys.Space)
+            {
+                e.Handled = true;
+                if (spaceDown)
+                {
+                    spaceDown = false;
+                    HandleRelease();
+                }
+            }
+            else if (e.KeyCode == Keys.Menu || e.KeyCode == Keys.F10)
+            {
+                e.Handled = true;
+            }
+        }
+
+        private void ReleaseAllInput()
+        {
+            // Вікно втратило фокус: відпускання могло не дійти, тому скидаємо утримання
+            spaceDown = false;
+            isHolding = false;
+            if (isCharging)
+            {
+                isCharging = false;
+                tmrCast.Stop();
+                pnlGame.Invalidate();
+            }
+        }
+
+        private void HandlePress()
+        {
             // Під час міні-гри утримання тримає зону вгорі
             if (isFighting)
             {
@@ -132,13 +220,8 @@ namespace Fishing
             tmrCast.Start();
         }
 
-        private void PnlGame_MouseUp(object sender, MouseEventArgs e)
+        private void HandleRelease()
         {
-            if (e.Button != MouseButtons.Left)
-            {
-                return;
-            }
-
             if (isFighting)
             {
                 isHolding = false;
@@ -159,7 +242,7 @@ namespace Fishing
             // Чим сильніше заряд, тим далі летить поплавець
             float distance = 150 + power * 4;
             floatPos = rodTip;
-            floatTarget = new PointF(rodTip.X + distance, pnlGame.Height - 100);
+            floatTarget = new PointF(rodTip.X + distance, LogicalHeight - 100);
             isFlying = true;
             tmrCast.Start();
         }
@@ -303,6 +386,11 @@ namespace Fishing
 
         private void pnlGame_Paint(object sender, PaintEventArgs e)
         {
+            // Масштаб під DPI і згладжування ліній та тексту
+            e.Graphics.ScaleTransform(DpiScale, DpiScale);
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+
             // Вудка і волосінь
             e.Graphics.DrawLine(rodPen, rodTip, floatPos);
 
@@ -319,8 +407,8 @@ namespace Fishing
             // Шкала сили закидання
             if (isCharging)
             {
-                e.Graphics.DrawRectangle(Pens.Black, 20, pnlGame.Height - 40, 200, 16);
-                e.Graphics.FillRectangle(Brushes.OrangeRed, 21, pnlGame.Height - 39, castPower * 2 - 1 < 0 ? 0 : castPower * 2 - 1, 14);
+                e.Graphics.DrawRectangle(Pens.Black, 20, LogicalHeight - 40, 200, 16);
+                e.Graphics.FillRectangle(Brushes.OrangeRed, 21, LogicalHeight - 39, castPower * 2 - 1 < 0 ? 0 : castPower * 2 - 1, 14);
             }
 
             // Міні-гра: смуга з зеленою зоною, рибою і шкала прогресу поруч
@@ -341,7 +429,7 @@ namespace Fishing
             const int barWidth = 30;
             const int barHeight = 300;
             const int barTop = 60;
-            int barLeft = pnlGame.Width - 80;
+            float barLeft = LogicalWidth - 80;
 
             // Фон смуги
             g.FillRectangle(Brushes.White, barLeft, barTop, barWidth, barHeight);
@@ -361,7 +449,7 @@ namespace Fishing
             g.FillEllipse(Brushes.DarkRed, barLeft + barWidth / 2f - 6, fishY - 5, 12, 10);
 
             // Шкала прогресу зліва від смуги, заповнюється знизу вгору
-            int progressLeft = barLeft - 30;
+            float progressLeft = barLeft - 30;
             g.DrawRectangle(Pens.Black, progressLeft, barTop, 16, barHeight);
             float fillHeight = fightProgress / 100f * barHeight;
             g.FillRectangle(Brushes.Gold, progressLeft + 1, barTop + barHeight - fillHeight, 14, fillHeight);
