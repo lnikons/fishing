@@ -8,6 +8,7 @@ using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Fishing.Models;
 
 namespace Fishing
 {
@@ -43,6 +44,26 @@ namespace Fishing
         private const float ZoneHalfSize = 12.5f;
         private const int FightTimeLimit = 12000;
 
+        // Екран результату вилову
+        private bool isShowingResult;
+        private Fish lastFish;
+        private double lastWeight;
+        private int lastPrice;
+        private bool lastIsNewSpecies;
+        private readonly HashSet<int> discoveredFishIds = new HashSet<int>();
+
+        // ТИМЧАСОВО до карток 20–21 (каталог і вибір риби на бекенді):
+        // кілька риб на моделі Fish, щоб екран результату мав що показати.
+        private static readonly List<Fish> TempFishCatalog = new List<Fish>
+        {
+            new Fish { Id = 1, Name = "Карась",       Rarity = Rarity.Common,    BasePrice = 5,   MinWeight = 0.2,  MaxWeight = 0.8 },
+            new Fish { Id = 2, Name = "Окунь",        Rarity = Rarity.Common,    BasePrice = 7,   MinWeight = 0.1,  MaxWeight = 0.6 },
+            new Fish { Id = 3, Name = "Щука",         Rarity = Rarity.Uncommon,  BasePrice = 15,  MinWeight = 1.0,  MaxWeight = 4.0 },
+            new Fish { Id = 4, Name = "Короп",        Rarity = Rarity.Rare,      BasePrice = 25,  MinWeight = 1.5,  MaxWeight = 6.0 },
+            new Fish { Id = 5, Name = "Сом",          Rarity = Rarity.Epic,      BasePrice = 50,  MinWeight = 5.0,  MaxWeight = 20.0 },
+            new Fish { Id = 6, Name = "Золота рибка", Rarity = Rarity.Legendary, BasePrice = 100, MinWeight = 0.05, MaxWeight = 0.2 },
+        };
+
         // Масштаб екрана: 1.0 при 100%, 1.25 при 125% і т. д.
         // Гра малюється в логічних пікселях (як при 100%), а Graphics масштабує їх під екран.
         private float DpiScale => DeviceDpi / 96f;
@@ -54,6 +75,11 @@ namespace Fishing
         private readonly Pen rodPen = new Pen(Color.SaddleBrown, 3);
         private readonly Font alertFont = new Font("Segoe UI", 27F, FontStyle.Bold, GraphicsUnit.Pixel);
         private readonly Font statusFont = new Font("Segoe UI", 19F, FontStyle.Bold, GraphicsUnit.Pixel);
+        private readonly Font resultTitleFont = new Font("Segoe UI", 26F, FontStyle.Bold, GraphicsUnit.Pixel);
+        private readonly Font resultTextFont = new Font("Segoe UI", 18F, FontStyle.Regular, GraphicsUnit.Pixel);
+        private readonly Font resultHintFont = new Font("Segoe UI", 14F, FontStyle.Italic, GraphicsUnit.Pixel);
+        private readonly SolidBrush overlayBrush = new SolidBrush(Color.FromArgb(140, 0, 0, 0));
+        private readonly StringFormat centerFormat = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
 
         private readonly System.Windows.Forms.Timer tmrCast = new System.Windows.Forms.Timer { Interval = 16 };
         private readonly System.Windows.Forms.Timer tmrBite = new System.Windows.Forms.Timer();
@@ -188,6 +214,15 @@ namespace Fishing
 
         private void HandlePress()
         {
+            // Екран результату закривається будь-яким натисканням
+            if (isShowingResult)
+            {
+                isShowingResult = false;
+                statusText = "";
+                pnlGame.Invalidate();
+                return;
+            }
+
             // Під час міні-гри утримання тримає зону вгорі
             if (isFighting)
             {
@@ -279,7 +314,14 @@ namespace Fishing
             tmrFight.Stop();
             isFighting = false;
             isHolding = false;
-            statusText = caught ? "Зловлено!" : "Риба втекла";
+            if (caught)
+            {
+                ShowCatchResult(PickCaughtFish());
+            }
+            else
+            {
+                statusText = "Риба втекла";
+            }
             pnlGame.Invalidate();
         }
 
@@ -422,6 +464,139 @@ namespace Fishing
             {
                 e.Graphics.DrawString(statusText, statusFont, Brushes.Black, 20, 20);
             }
+
+            // Екран результату поверх гри
+            if (isShowingResult && lastFish != null)
+            {
+                DrawResultCard(e.Graphics);
+            }
+        }
+
+        private Fish PickCaughtFish()
+        {
+            // ТИМЧАСОВО: випадкова риба з тимчасового списку, рідкісні випадають рідше.
+            // Замінити на вибір з бекенду (картка 21).
+            int[] rarityWeights = { 50, 25, 15, 8, 2 }; // Common .. Legendary
+            int total = TempFishCatalog.Sum(f => rarityWeights[(int)f.Rarity]);
+            int roll = rng.Next(total);
+            foreach (Fish fish in TempFishCatalog)
+            {
+                roll -= rarityWeights[(int)fish.Rarity];
+                if (roll < 0)
+                {
+                    return fish;
+                }
+            }
+            return TempFishCatalog[0];
+        }
+
+        private void ShowCatchResult(Fish fish)
+        {
+            lastFish = fish;
+            lastWeight = fish.MinWeight + rng.NextDouble() * (fish.MaxWeight - fish.MinWeight);
+            lastPrice = fish.BasePrice;
+            lastIsNewSpecies = discoveredFishIds.Add(fish.Id); // true, якщо цей вид ще не ловили
+            statusText = "";
+            isShowingResult = true;
+        }
+
+        private static string RarityName(Rarity rarity)
+        {
+            switch (rarity)
+            {
+                case Rarity.Common: return "Звичайна";
+                case Rarity.Uncommon: return "Незвичайна";
+                case Rarity.Rare: return "Рідкісна";
+                case Rarity.Epic: return "Епічна";
+                default: return "Легендарна";
+            }
+        }
+
+        private static Color RarityColor(Rarity rarity)
+        {
+            switch (rarity)
+            {
+                case Rarity.Common: return Color.DimGray;
+                case Rarity.Uncommon: return Color.ForestGreen;
+                case Rarity.Rare: return Color.RoyalBlue;
+                case Rarity.Epic: return Color.MediumOrchid;
+                default: return Color.DarkOrange;
+            }
+        }
+
+        private static string CoinsWord(int amount)
+        {
+            // 1 монета, 2–4 монети, 5+ монет (з урахуванням 11–14)
+            int lastTwo = amount % 100;
+            int last = amount % 10;
+            if (lastTwo >= 11 && lastTwo <= 14) return "монет";
+            if (last == 1) return "монета";
+            if (last >= 2 && last <= 4) return "монети";
+            return "монет";
+        }
+
+        private void DrawResultCard(Graphics g)
+        {
+            float width = LogicalWidth;
+            float height = LogicalHeight;
+
+            // Затемнення ігрового поля
+            g.FillRectangle(overlayBrush, 0, 0, width, height);
+
+            // Картка по центру
+            const float cardWidth = 380;
+            const float cardHeight = 250;
+            float cardLeft = (width - cardWidth) / 2;
+            float cardTop = (height - cardHeight) / 2;
+            g.FillRectangle(Brushes.White, cardLeft, cardTop, cardWidth, cardHeight);
+            g.DrawRectangle(Pens.Black, cardLeft, cardTop, cardWidth, cardHeight);
+
+            Color rarityColor = RarityColor(lastFish.Rarity);
+
+            // Заголовок
+            g.DrawString("Зловлено!", resultTitleFont, Brushes.Black,
+                new RectangleF(cardLeft, cardTop + 10, cardWidth, 36), centerFormat);
+
+            // Проста риба-заглушка в кольорі рідкості (справжні спрайти — картка 16)
+            float fishX = cardLeft + cardWidth / 2;
+            float fishY = cardTop + 75;
+            using (var fishBrush = new SolidBrush(rarityColor))
+            {
+                g.FillEllipse(fishBrush, fishX - 35, fishY - 15, 60, 30);
+                g.FillPolygon(fishBrush, new[]
+                {
+                    new PointF(fishX + 20, fishY),
+                    new PointF(fishX + 42, fishY - 14),
+                    new PointF(fishX + 42, fishY + 14),
+                });
+            }
+            g.FillEllipse(Brushes.White, fishX - 25, fishY - 6, 7, 7);
+
+            // Назва, рідкість, вага, ціна
+            using (var rarityBrush = new SolidBrush(rarityColor))
+            {
+                g.DrawString(lastFish.Name, resultTitleFont, rarityBrush,
+                    new RectangleF(cardLeft, cardTop + 98, cardWidth, 34), centerFormat);
+                g.DrawString(RarityName(lastFish.Rarity), resultTextFont, rarityBrush,
+                    new RectangleF(cardLeft, cardTop + 130, cardWidth, 24), centerFormat);
+            }
+            g.DrawString($"Вага: {lastWeight:0.00} кг", resultTextFont, Brushes.Black,
+                new RectangleF(cardLeft, cardTop + 156, cardWidth, 24), centerFormat);
+            g.DrawString($"Ціна: {lastPrice} {CoinsWord(lastPrice)}", resultTextFont, Brushes.Black,
+                new RectangleF(cardLeft, cardTop + 182, cardWidth, 24), centerFormat);
+
+            // Позначка нового виду в правому верхньому куті картки
+            if (lastIsNewSpecies)
+            {
+                var badge = new RectangleF(cardLeft + cardWidth - 128, cardTop - 14, 140, 30);
+                g.FillRectangle(Brushes.Gold, badge);
+                g.DrawRectangle(Pens.DarkGoldenrod, badge.X, badge.Y, badge.Width, badge.Height);
+                g.DrawString("Новий вид!", statusFont, Brushes.Black, badge, centerFormat);
+            }
+
+            // Підказка
+            g.DrawString("ЛКМ або пробіл — продовжити", resultHintFont, Brushes.DimGray,
+                new RectangleF(cardLeft, cardTop + cardHeight - 30, cardWidth, 22), centerFormat);
         }
 
         private void DrawFightBar(Graphics g)
