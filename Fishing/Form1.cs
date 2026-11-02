@@ -54,6 +54,13 @@ namespace Fishing
         private bool lastIsNewSpecies;
         private readonly HashSet<int> discoveredFishIds = new HashSet<int>();
 
+        // Журнал риб: скільки разів спіймано кожен вид і найбільша вага
+        private readonly Dictionary<int, int> catchCounts = new Dictionary<int, int>();
+        private readonly Dictionary<int, double> bestWeights = new Dictionary<int, double>();
+
+        // Екран журналу (створюється в коді, а не в дизайнері)
+        private readonly Panel pnlJournal = new Panel();
+
         // ТИМЧАСОВО до карток 20–21 (каталог і вибір риби на бекенді):
         // кілька риб на моделі Fish, щоб екран результату мав що показати.
         private static readonly List<Fish> TempFishCatalog = new List<Fish>
@@ -122,6 +129,16 @@ namespace Fishing
             Deactivate += (s, e) => ReleaseAllInput();
 
             btnPlay.Click += (s, e) => ShowPanel(pnlGame);
+            btnJournal.Click += (s, e) => ShowPanel(pnlJournal);
+
+            // Панель журналу на місці ігрової
+            pnlJournal.Location = pnlGame.Location;
+            pnlJournal.Size = pnlGame.Size;
+            pnlJournal.BackColor = Color.FromArgb(250, 244, 228);
+            pnlJournal.Visible = false;
+            EnableDoubleBuffering(pnlJournal);
+            pnlJournal.Paint += PnlJournal_Paint;
+            Controls.Add(pnlJournal);
 
             // Кнопка «Меню» вгорі праворуч, видна лише на ігровому екрані
             btnMenu.Text = "Меню (Esc)";
@@ -132,7 +149,7 @@ namespace Fishing
             btnMenu.Visible = false;
             btnMenu.Click += (s, e) => ReturnToMenu();
             Controls.Add(btnMenu);
-            btnMenu.BringToFront();
+            btnMenu.BringToFront(); // кнопка поверх гри і журналу
             btnExit.Click += (s, e) => Close();
 
             floatPos = rodTip;
@@ -184,8 +201,13 @@ namespace Fishing
         {
             pnlMenu.Visible = false;
             pnlGame.Visible = false;
+            pnlJournal.Visible = false;
             panel.Visible = true;
-            btnMenu.Visible = panel == pnlGame;
+            btnMenu.Visible = panel != pnlMenu;
+            if (panel == pnlJournal)
+            {
+                pnlJournal.Invalidate();
+            }
             ActiveControl = null;
         }
 
@@ -249,7 +271,7 @@ namespace Fishing
 
         private void Form1_KeyDown(object sender, KeyEventArgs e)
         {
-            if (e.KeyCode == Keys.Escape && pnlGame.Visible)
+            if (e.KeyCode == Keys.Escape && (pnlGame.Visible || pnlJournal.Visible))
             {
                 e.Handled = true;
                 ReturnToMenu();
@@ -622,6 +644,13 @@ namespace Fishing
             lastWeight = fish.MinWeight + rng.NextDouble() * (fish.MaxWeight - fish.MinWeight);
             lastPrice = fish.BasePrice;
             lastIsNewSpecies = discoveredFishIds.Add(fish.Id); // true, якщо цей вид ще не ловили
+
+            // Облік для журналу
+            catchCounts[fish.Id] = (catchCounts.TryGetValue(fish.Id, out int count) ? count : 0) + 1;
+            if (!bestWeights.TryGetValue(fish.Id, out double best) || lastWeight > best)
+            {
+                bestWeights[fish.Id] = lastWeight;
+            }
             statusText = "";
             isShowingResult = true;
         }
@@ -686,17 +715,7 @@ namespace Fishing
             // Проста риба-заглушка в кольорі рідкості (справжні спрайти — картка 16)
             float fishX = cardLeft + cardWidth / 2;
             float fishY = cardTop + 75;
-            using (var fishBrush = new SolidBrush(rarityColor))
-            {
-                g.FillEllipse(fishBrush, fishX - 35, fishY - 15, 60, 30);
-                g.FillPolygon(fishBrush, new[]
-                {
-                    new PointF(fishX + 20, fishY),
-                    new PointF(fishX + 42, fishY - 14),
-                    new PointF(fishX + 42, fishY + 14),
-                });
-            }
-            g.FillEllipse(Brushes.White, fishX - 25, fishY - 6, 7, 7);
+            DrawFishShape(g, fishX, fishY, 1f, rarityColor, true);
 
             // Назва, рідкість, вага, ціна
             using (var rarityBrush = new SolidBrush(rarityColor))
@@ -723,6 +742,94 @@ namespace Fishing
             // Підказка
             g.DrawString("ЛКМ або пробіл — продовжити", resultHintFont, Brushes.DimGray,
                 new RectangleF(cardLeft, cardTop + cardHeight - 30, cardWidth, 22), centerFormat);
+        }
+
+        private static void DrawFishShape(Graphics g, float centerX, float centerY, float scale, Color color, bool withEye)
+        {
+            // Проста риба-заглушка (справжні спрайти — картка 16)
+            using (var brush = new SolidBrush(color))
+            {
+                g.FillEllipse(brush, centerX - 35 * scale, centerY - 15 * scale, 60 * scale, 30 * scale);
+                g.FillPolygon(brush, new[]
+                {
+                    new PointF(centerX + 20 * scale, centerY),
+                    new PointF(centerX + 42 * scale, centerY - 14 * scale),
+                    new PointF(centerX + 42 * scale, centerY + 14 * scale),
+                });
+            }
+            if (withEye)
+            {
+                g.FillEllipse(Brushes.White, centerX - 25 * scale, centerY - 6 * scale, 7 * scale, 7 * scale);
+            }
+        }
+
+        private void PnlJournal_Paint(object sender, PaintEventArgs e)
+        {
+            Graphics g = e.Graphics;
+            g.ScaleTransform(DpiScale, DpiScale);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+
+            float width = pnlJournal.ClientSize.Width / DpiScale;
+
+            // Заголовок і лічильник відкритих видів
+            g.DrawString("Журнал риб", resultTitleFont, Brushes.Black,
+                new RectangleF(0, 8, width, 34), centerFormat);
+            g.DrawString($"Відкрито видів: {discoveredFishIds.Count} з {TempFishCatalog.Count}", resultTextFont, Brushes.DimGray,
+                new RectangleF(0, 40, width, 24), centerFormat);
+
+            // Сітка 3 × 2 карток
+            const int columns = 3;
+            const float cardWidth = 230;
+            const float cardHeight = 140;
+            const float gap = 16;
+            const float gridTop = 76;
+            float gridLeft = (width - (columns * cardWidth + (columns - 1) * gap)) / 2;
+
+            for (int i = 0; i < TempFishCatalog.Count; i++)
+            {
+                float x = gridLeft + (i % columns) * (cardWidth + gap);
+                float y = gridTop + (i / columns) * (cardHeight + gap);
+                DrawJournalCard(g, TempFishCatalog[i], new RectangleF(x, y, cardWidth, cardHeight));
+            }
+        }
+
+        private void DrawJournalCard(Graphics g, Fish fish, RectangleF card)
+        {
+            bool discovered = discoveredFishIds.Contains(fish.Id);
+
+            g.FillRectangle(discovered ? Brushes.White : Brushes.Gainsboro, card);
+            g.DrawRectangle(Pens.DarkGray, card.X, card.Y, card.Width, card.Height);
+
+            float centerX = card.X + card.Width / 2;
+            float fishY = card.Y + 38;
+
+            if (!discovered)
+            {
+                // Невідкритий вид: темний силует і знаки питання
+                DrawFishShape(g, centerX, fishY, 1.1f, Color.FromArgb(70, 70, 80), false);
+                g.DrawString("???", resultTitleFont, Brushes.DimGray,
+                    new RectangleF(card.X, card.Y + 64, card.Width, 34), centerFormat);
+                g.DrawString("Ще не спіймано", resultHintFont, Brushes.Gray,
+                    new RectangleF(card.X, card.Y + 100, card.Width, 22), centerFormat);
+                return;
+            }
+
+            Color rarityColor = RarityColor(fish.Rarity);
+            DrawFishShape(g, centerX, fishY, 1.1f, rarityColor, true);
+
+            using (var rarityBrush = new SolidBrush(rarityColor))
+            {
+                g.DrawString(fish.Name, statusFont, rarityBrush,
+                    new RectangleF(card.X, card.Y + 64, card.Width, 26), centerFormat);
+                g.DrawString(RarityName(fish.Rarity), resultHintFont, rarityBrush,
+                    new RectangleF(card.X, card.Y + 88, card.Width, 20), centerFormat);
+            }
+
+            int count = catchCounts.TryGetValue(fish.Id, out int c) ? c : 0;
+            double best = bestWeights.TryGetValue(fish.Id, out double w) ? w : 0;
+            g.DrawString($"Спіймано: {count} · рекорд {best:0.00} кг", resultHintFont, Brushes.Black,
+                new RectangleF(card.X, card.Y + 112, card.Width, 22), centerFormat);
         }
 
         private void DrawFightBar(Graphics g)
