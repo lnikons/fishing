@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Data;
 using System.Drawing;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -32,12 +33,19 @@ namespace Fishing
         // Міні-гра на утримання
         private bool isFighting;
         private bool isHolding;
-        private float playerPos;      // позиція маркера на смузі, 0–100 знизу вгору
+        private float playerPos;      // центр зеленої зони на смузі, 0–100 знизу вгору
         private float fightProgress;  // прогрес вилову, 0–100
         private int fightElapsed;     // мс від початку міні-гри
-        private const float ZoneLow = 40f;
-        private const float ZoneHigh = 65f;
+        private float fishPos;        // позиція риби на смузі, 0–100
+        private float fishTarget;     // куди зараз плаває риба
+        private int fishRetargetMs;   // скільки ще риба плаває до нової цілі
+        private const float ZoneHalfSize = 12.5f;
         private const int FightTimeLimit = 12000;
+
+        // Ресурси для малювання: створюються один раз, а не в кожному кадрі
+        private readonly Pen rodPen = new Pen(Color.SaddleBrown, 3);
+        private readonly Font alertFont = new Font("Segoe UI", 20F, FontStyle.Bold);
+        private readonly Font statusFont = new Font("Segoe UI", 14F, FontStyle.Bold);
 
         private readonly System.Windows.Forms.Timer tmrCast = new System.Windows.Forms.Timer { Interval = 16 };
         private readonly System.Windows.Forms.Timer tmrBite = new System.Windows.Forms.Timer();
@@ -59,8 +67,18 @@ namespace Fishing
             tmrReaction.Tick += TmrReaction_Tick;
             tmrFight.Tick += TmrFight_Tick;
 
+            // Подвійне буферизування прибирає мерехтіння при малюванні
+            EnableDoubleBuffering(pnlGame);
+
             pnlGame.MouseDown += PnlGame_MouseDown;
             pnlGame.MouseUp += PnlGame_MouseUp;
+        }
+
+        private static void EnableDoubleBuffering(Control control)
+        {
+            typeof(Control)
+                .GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic)
+                .SetValue(control, true, null);
         }
 
         private void ShowPanel(Panel panel)
@@ -72,7 +90,7 @@ namespace Fishing
 
         public void UpdateScore(int points)
         {
-            lblScore.Text = $"Бали: {points}";
+            lblScore.Text = $"Монети: {points}";
         }
 
         private void PnlGame_MouseDown(object sender, MouseEventArgs e)
@@ -82,7 +100,7 @@ namespace Fishing
                 return;
             }
 
-            // Під час міні-гри утримання тримає маркер вгорі
+            // Під час міні-гри утримання тримає зону вгорі
             if (isFighting)
             {
                 isHolding = true;
@@ -157,11 +175,20 @@ namespace Fishing
         {
             isFighting = true;
             isHolding = false;
-            playerPos = 30f;
+            playerPos = 50f;
             fightProgress = 30f;
             fightElapsed = 0;
+            fishPos = 50f;
+            PickNewFishTarget();
             statusText = "Риба на гачку!";
             tmrFight.Start();
+        }
+
+        private void PickNewFishTarget()
+        {
+            // Риба обирає нову точку на смузі і плаває до неї
+            fishTarget = rng.Next(5, 96);
+            fishRetargetMs = rng.Next(800, 2001);
         }
 
         private void EndFight(bool caught)
@@ -171,6 +198,11 @@ namespace Fishing
             isHolding = false;
             statusText = caught ? "Зловлено!" : "Риба втекла";
             pnlGame.Invalidate();
+        }
+
+        private bool IsFishInZone()
+        {
+            return fishPos >= playerPos - ZoneHalfSize && fishPos <= playerPos + ZoneHalfSize;
         }
 
         private void TmrBite_Tick(object sender, EventArgs e)
@@ -192,13 +224,21 @@ namespace Fishing
 
         private void TmrFight_Tick(object sender, EventArgs e)
         {
-            // Маркер піднімається під час утримання і падає, коли кнопку відпущено
+            // Зелена зона піднімається під час утримання і опускається, коли кнопку відпущено
             playerPos += isHolding ? 1.2f : -0.9f;
-            playerPos = Math.Max(0f, Math.Min(100f, playerPos));
+            playerPos = Math.Max(ZoneHalfSize, Math.Min(100f - ZoneHalfSize, playerPos));
 
-            // Прогрес росте, поки маркер у зеленій зоні, і падає поза нею
-            bool inZone = playerPos >= ZoneLow && playerPos <= ZoneHigh;
-            fightProgress += inZone ? 0.4f : -0.25f;
+            // Риба плаває випадково: доходить до цілі і обирає нову
+            if (fishRetargetMs <= 0 || Math.Abs(fishTarget - fishPos) < 1f)
+            {
+                PickNewFishTarget();
+            }
+            fishRetargetMs -= tmrFight.Interval;
+            fishPos += Math.Sign(fishTarget - fishPos) * 0.8f;
+            fishPos = Math.Max(0f, Math.Min(100f, fishPos));
+
+            // Прогрес росте, поки риба в зеленій зоні, і падає поза нею
+            fightProgress += IsFishInZone() ? 0.5f : -0.3f;
             fightProgress = Math.Max(0f, Math.Min(100f, fightProgress));
 
             fightElapsed += tmrFight.Interval;
@@ -264,10 +304,7 @@ namespace Fishing
         private void pnlGame_Paint(object sender, PaintEventArgs e)
         {
             // Вудка і волосінь
-            using (var rodPen = new Pen(Color.SaddleBrown, 3))
-            {
-                e.Graphics.DrawLine(rodPen, rodTip, floatPos);
-            }
+            e.Graphics.DrawLine(rodPen, rodTip, floatPos);
 
             // Поплавець
             e.Graphics.FillEllipse(Brushes.Red, floatPos.X - 6, floatPos.Y - 6, 12, 12);
@@ -276,10 +313,7 @@ namespace Fishing
             // Знак поклювання над поплавцем
             if (isBiting)
             {
-                using (var alertFont = new Font("Segoe UI", 20F, FontStyle.Bold))
-                {
-                    e.Graphics.DrawString("!", alertFont, Brushes.Red, floatPos.X - 8, floatPos.Y - 55);
-                }
+                e.Graphics.DrawString("!", alertFont, Brushes.Red, floatPos.X - 8, floatPos.Y - 55);
             }
 
             // Шкала сили закидання
@@ -289,7 +323,7 @@ namespace Fishing
                 e.Graphics.FillRectangle(Brushes.OrangeRed, 21, pnlGame.Height - 39, castPower * 2 - 1 < 0 ? 0 : castPower * 2 - 1, 14);
             }
 
-            // Міні-гра: смуга з зеленою зоною і маркером, та шкала прогресу поруч
+            // Міні-гра: смуга з зеленою зоною, рибою і шкала прогресу поруч
             if (isFighting)
             {
                 DrawFightBar(e.Graphics);
@@ -298,10 +332,7 @@ namespace Fishing
             // Повідомлення про результат
             if (!string.IsNullOrEmpty(statusText))
             {
-                using (var statusFont = new Font("Segoe UI", 14F, FontStyle.Bold))
-                {
-                    e.Graphics.DrawString(statusText, statusFont, Brushes.Black, 20, 20);
-                }
+                e.Graphics.DrawString(statusText, statusFont, Brushes.Black, 20, 20);
             }
         }
 
@@ -315,17 +346,19 @@ namespace Fishing
             // Фон смуги
             g.FillRectangle(Brushes.White, barLeft, barTop, barWidth, barHeight);
 
-            // Зелена зона: значення 100 — верх смуги, 0 — низ
-            float zoneTop = barTop + (100f - ZoneHigh) / 100f * barHeight;
-            float zoneBottom = barTop + (100f - ZoneLow) / 100f * barHeight;
+            // Зелена зона навколо центру playerPos: значення 100 — верх смуги, 0 — низ
+            float zoneHighValue = Math.Min(100f, playerPos + ZoneHalfSize);
+            float zoneLowValue = Math.Max(0f, playerPos - ZoneHalfSize);
+            float zoneTop = barTop + (100f - zoneHighValue) / 100f * barHeight;
+            float zoneBottom = barTop + (100f - zoneLowValue) / 100f * barHeight;
             g.FillRectangle(Brushes.LightGreen, barLeft, zoneTop, barWidth, zoneBottom - zoneTop);
 
             // Рамка смуги
             g.DrawRectangle(Pens.Black, barLeft, barTop, barWidth, barHeight);
 
-            // Маркер гравця
-            float markerY = barTop + (100f - playerPos) / 100f * barHeight;
-            g.FillRectangle(Brushes.Black, barLeft - 4, markerY - 3, barWidth + 8, 6);
+            // Риба: темно-червона точка, що плаває по смузі
+            float fishY = barTop + (100f - fishPos) / 100f * barHeight;
+            g.FillEllipse(Brushes.DarkRed, barLeft + barWidth / 2f - 6, fishY - 5, 12, 10);
 
             // Шкала прогресу зліва від смуги, заповнюється знизу вгору
             int progressLeft = barLeft - 30;
