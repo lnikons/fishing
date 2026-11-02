@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
+using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
 using System.Reflection;
@@ -22,7 +23,7 @@ namespace Fishing
         // Стан закидання
         private bool isCharging;
         private bool isFlying;
-        private int castPower;
+        private float castPower;
         private int castDirection = 1;
 
         // Стан поклювання
@@ -35,12 +36,13 @@ namespace Fishing
         private bool isFighting;
         private bool isHolding;
         private bool spaceDown;       // пробіл зараз утримується
+        private bool mouseDown;       // ЛКМ зараз утримується на полі
         private float playerPos;      // центр зеленої зони на смузі, 0–100 знизу вгору
         private float fightProgress;  // прогрес вилову, 0–100
-        private int fightElapsed;     // мс від початку міні-гри
+        private float fightElapsed;   // мс від початку міні-гри
         private float fishPos;        // позиція риби на смузі, 0–100
         private float fishTarget;     // куди зараз плаває риба
-        private int fishRetargetMs;   // скільки ще риба плаває до нової цілі
+        private float fishRetargetMs; // скільки ще риба плаває до нової цілі, мс
         private const float ZoneHalfSize = 12.5f;
         private const int FightTimeLimit = 12000;
 
@@ -86,6 +88,21 @@ namespace Fishing
         private readonly System.Windows.Forms.Timer tmrReaction = new System.Windows.Forms.Timer { Interval = 1500 };
         private readonly System.Windows.Forms.Timer tmrFight = new System.Windows.Forms.Timer { Interval = 16 };
 
+        // Реальний час між тіками: таймер WinForms може тікати рідше за 16 мс,
+        // тому рух рахується від справжнього часу, а не від кількості тіків
+        private readonly Stopwatch castClock = new Stopwatch();
+        private readonly Stopwatch fightClock = new Stopwatch();
+
+        // Відлік від моменту, коли минуло вікно реакції: запізнілий клік не повинен одразу закидати знову
+        private readonly Stopwatch sinceReactionTimeout = new Stopwatch();
+        private const int LatePressIgnoreMs = 300;
+
+        // Кнопка повернення в меню на ігровому екрані (створюється в коді, а не в дизайнері)
+        private readonly Button btnMenu = new Button();
+
+        // Чи утримується зараз хоча б одна кнопка керування (ЛКМ або пробіл)
+        private bool AnyInputDown => mouseDown || spaceDown;
+
         public Form1()
         {
             InitializeComponent();
@@ -105,6 +122,17 @@ namespace Fishing
             Deactivate += (s, e) => ReleaseAllInput();
 
             btnPlay.Click += (s, e) => ShowPanel(pnlGame);
+
+            // Кнопка «Меню» вгорі праворуч, видна лише на ігровому екрані
+            btnMenu.Text = "Меню (Esc)";
+            btnMenu.Size = new Size(110, 34);
+            btnMenu.Location = new Point(ClientSize.Width - btnMenu.Width - 12, 8);
+            btnMenu.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+            btnMenu.TabStop = false;
+            btnMenu.Visible = false;
+            btnMenu.Click += (s, e) => ReturnToMenu();
+            Controls.Add(btnMenu);
+            btnMenu.BringToFront();
             btnExit.Click += (s, e) => Close();
 
             floatPos = rodTip;
@@ -119,9 +147,30 @@ namespace Fishing
             EnableDoubleBuffering(pnlGame);
 
             // Малювання підключено в коді, щоб дизайнер його не загубив
+            // Спершу відписка: якщо дизайнер теж підключить Paint, кадр не малюватиметься двічі
+            pnlGame.Paint -= pnlGame_Paint;
             pnlGame.Paint += pnlGame_Paint;
             pnlGame.MouseDown += PnlGame_MouseDown;
             pnlGame.MouseUp += PnlGame_MouseUp;
+
+            // Звільняємо таймери і ресурси малювання при закритті вікна
+            FormClosed += (s, e) => DisposeGameResources();
+        }
+
+        private void DisposeGameResources()
+        {
+            tmrCast.Dispose();
+            tmrBite.Dispose();
+            tmrReaction.Dispose();
+            tmrFight.Dispose();
+            rodPen.Dispose();
+            alertFont.Dispose();
+            statusFont.Dispose();
+            resultTitleFont.Dispose();
+            resultTextFont.Dispose();
+            resultHintFont.Dispose();
+            overlayBrush.Dispose();
+            centerFormat.Dispose();
         }
 
         private static void EnableDoubleBuffering(Control control)
@@ -136,7 +185,36 @@ namespace Fishing
             pnlMenu.Visible = false;
             pnlGame.Visible = false;
             panel.Visible = true;
+            btnMenu.Visible = panel == pnlGame;
             ActiveControl = null;
+        }
+
+        private void ReturnToMenu()
+        {
+            ResetGameState();
+            ShowPanel(pnlMenu);
+        }
+
+        private void ResetGameState()
+        {
+            // Зупиняємо всі таймери, щоб гра не йшла далі у фоні, поки відкрите меню
+            tmrCast.Stop();
+            tmrBite.Stop();
+            tmrReaction.Stop();
+            tmrFight.Stop();
+
+            isCharging = false;
+            isFlying = false;
+            isBiting = false;
+            isFighting = false;
+            isHolding = false;
+            isShowingResult = false;
+            mouseDown = false;
+            spaceDown = false;
+            statusText = "";
+            floatPos = rodTip;
+            floatTarget = rodTip;
+            pnlGame.Invalidate();
         }
 
         public void UpdateScore(int points)
@@ -146,32 +224,57 @@ namespace Fishing
 
         private void PnlGame_MouseDown(object sender, MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Left)
+            if (e.Button == MouseButtons.Left && !mouseDown)
             {
-                HandlePress();
+                bool wasDown = AnyInputDown;
+                mouseDown = true;
+                if (!wasDown)
+                {
+                    HandlePress();
+                }
             }
         }
 
         private void PnlGame_MouseUp(object sender, MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Left)
+            if (e.Button == MouseButtons.Left && mouseDown)
             {
-                HandleRelease();
+                mouseDown = false;
+                if (!AnyInputDown)
+                {
+                    HandleRelease();
+                }
             }
         }
 
         private void Form1_KeyDown(object sender, KeyEventArgs e)
         {
-            if (e.KeyCode == Keys.Space)
+            if (e.KeyCode == Keys.Escape && pnlGame.Visible)
             {
+                e.Handled = true;
+                ReturnToMenu();
+            }
+            else if (e.KeyCode == Keys.Space)
+            {
+                // Пробіл керує грою лише на ігровому екрані і без Alt/Ctrl/Shift.
+                // У меню він, як звично, натискає кнопку, а Alt+Пробіл відкриває системне меню вікна.
+                if (!pnlGame.Visible || e.Modifiers != Keys.None)
+                {
+                    return;
+                }
+
                 e.Handled = true;
                 e.SuppressKeyPress = true;
 
                 // Автоповтор утриманої клавіші не повинен знову запускати дію
-                if (!spaceDown && pnlGame.Visible)
+                if (!spaceDown)
                 {
+                    bool wasDown = AnyInputDown;
                     spaceDown = true;
-                    HandlePress();
+                    if (!wasDown)
+                    {
+                        HandlePress();
+                    }
                 }
             }
             else if (e.KeyCode == Keys.Menu || e.KeyCode == Keys.F10)
@@ -184,12 +287,12 @@ namespace Fishing
 
         private void Form1_KeyUp(object sender, KeyEventArgs e)
         {
-            if (e.KeyCode == Keys.Space)
+            if (e.KeyCode == Keys.Space && spaceDown)
             {
                 e.Handled = true;
-                if (spaceDown)
+                spaceDown = false;
+                if (!AnyInputDown)
                 {
-                    spaceDown = false;
                     HandleRelease();
                 }
             }
@@ -203,6 +306,7 @@ namespace Fishing
         {
             // Вікно втратило фокус: відпускання могло не дійти, тому скидаємо утримання
             spaceDown = false;
+            mouseDown = false;
             isHolding = false;
             if (isCharging)
             {
@@ -223,6 +327,12 @@ namespace Fishing
                 return;
             }
 
+            // Запізнілий клік одразу після «Риба втекла» не запускає новий закид
+            if (sinceReactionTimeout.IsRunning && sinceReactionTimeout.ElapsedMilliseconds < LatePressIgnoreMs)
+            {
+                return;
+            }
+
             // Під час міні-гри утримання тримає зону вгорі
             if (isFighting)
             {
@@ -235,8 +345,6 @@ namespace Fishing
             {
                 tmrReaction.Stop();
                 isBiting = false;
-                score += 1;
-                UpdateScore(score);
                 StartFight();
                 pnlGame.Invalidate();
                 return;
@@ -252,6 +360,7 @@ namespace Fishing
             castPower = 0;
             castDirection = 1;
             statusText = "";
+            castClock.Restart();
             tmrCast.Start();
         }
 
@@ -272,13 +381,14 @@ namespace Fishing
             StartCast(castPower);
         }
 
-        private void StartCast(int power)
+        private void StartCast(float power)
         {
             // Чим сильніше заряд, тим далі летить поплавець
             float distance = 150 + power * 4;
             floatPos = rodTip;
             floatTarget = new PointF(rodTip.X + distance, LogicalHeight - 100);
             isFlying = true;
+            castClock.Restart();
             tmrCast.Start();
         }
 
@@ -292,13 +402,15 @@ namespace Fishing
         private void StartFight()
         {
             isFighting = true;
-            isHolding = false;
+            // Кнопка, якою підсікли, може бути ще затиснута: тоді вона одразу керує зоною
+            isHolding = AnyInputDown;
             playerPos = 50f;
             fightProgress = 30f;
             fightElapsed = 0;
             fishPos = 50f;
             PickNewFishTarget();
             statusText = "Риба на гачку!";
+            fightClock.Restart();
             tmrFight.Start();
         }
 
@@ -316,6 +428,9 @@ namespace Fishing
             isHolding = false;
             if (caught)
             {
+                // Монета нараховується лише за спійману рибу
+                score += 1;
+                UpdateScore(score);
                 ShowCatchResult(PickCaughtFish());
             }
             else
@@ -344,13 +459,19 @@ namespace Fishing
             tmrReaction.Stop();
             isBiting = false;
             statusText = "Риба втекла";
+            sinceReactionTimeout.Restart();
             pnlGame.Invalidate();
         }
 
         private void TmrFight_Tick(object sender, EventArgs e)
         {
+            // k = 1, якщо з минулого тіку пройшло 16 мс; обмежено, щоб після підвисання не було стрибка
+            float dt = (float)fightClock.Elapsed.TotalMilliseconds;
+            fightClock.Restart();
+            float k = Math.Min(dt / 16f, 4f);
+
             // Зелена зона піднімається під час утримання і опускається, коли кнопку відпущено
-            playerPos += isHolding ? 1.2f : -0.9f;
+            playerPos += (isHolding ? 1.2f : -0.9f) * k;
             playerPos = Math.Max(ZoneHalfSize, Math.Min(100f - ZoneHalfSize, playerPos));
 
             // Риба плаває випадково: доходить до цілі і обирає нову
@@ -358,15 +479,15 @@ namespace Fishing
             {
                 PickNewFishTarget();
             }
-            fishRetargetMs -= tmrFight.Interval;
-            fishPos += Math.Sign(fishTarget - fishPos) * 0.8f;
+            fishRetargetMs -= dt;
+            fishPos += Math.Sign(fishTarget - fishPos) * 0.8f * k;
             fishPos = Math.Max(0f, Math.Min(100f, fishPos));
 
             // Прогрес росте, поки риба в зеленій зоні, і падає поза нею
-            fightProgress += IsFishInZone() ? 0.5f : -0.3f;
+            fightProgress += (IsFishInZone() ? 0.5f : -0.3f) * k;
             fightProgress = Math.Max(0f, Math.Min(100f, fightProgress));
 
-            fightElapsed += tmrFight.Interval;
+            fightElapsed += dt;
 
             if (fightProgress >= 100f)
             {
@@ -384,10 +505,14 @@ namespace Fishing
 
         private void TmrCast_Tick(object sender, EventArgs e)
         {
+            float dt = (float)castClock.Elapsed.TotalMilliseconds;
+            castClock.Restart();
+            float k = Math.Min(dt / 16f, 4f);
+
             if (isCharging)
             {
                 // Заряд ходить туди-сюди від 0 до 100
-                castPower += castDirection * 3;
+                castPower += castDirection * 3 * k;
                 if (castPower >= 100)
                 {
                     castPower = 100;
@@ -406,7 +531,8 @@ namespace Fishing
                 float dy = floatTarget.Y - floatPos.Y;
                 float length = (float)Math.Sqrt(dx * dx + dy * dy);
 
-                if (length <= 8)
+                float step = 8 * k;
+                if (length <= step)
                 {
                     floatPos = floatTarget;
                     isFlying = false;
@@ -415,7 +541,7 @@ namespace Fishing
                 }
                 else
                 {
-                    floatPos = new PointF(floatPos.X + dx / length * 8, floatPos.Y + dy / length * 8);
+                    floatPos = new PointF(floatPos.X + dx / length * step, floatPos.Y + dy / length * step);
                 }
             }
             else
