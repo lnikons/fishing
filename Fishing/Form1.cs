@@ -44,7 +44,7 @@ namespace Fishing
         private float fishTarget;     // куди зараз плаває риба
         private float fishRetargetMs; // скільки ще риба плаває до нової цілі, мс
         private const float ZoneHalfSize = 12.5f;
-        private const int FightTimeLimit = 12000;
+        private const float PressureGrowthMs = 6000f; // за скільки мс швидкість падіння шкали зростає на 100%
 
         // Екран результату вилову
         private bool isShowingResult;
@@ -506,7 +506,11 @@ namespace Fishing
             fishPos = Math.Max(0f, Math.Min(100f, fishPos));
 
             // Прогрес росте, поки риба в зеленій зоні, і падає поза нею
-            fightProgress += (IsFishInZone() ? 0.5f : -0.3f) * k;
+            // Чим довше триває виважування, тим швидше падає шкала поза зоною:
+            // через 6 с — удвічі, через 12 с — утричі. Так ловля не тягнеться вічно,
+            // а риба зривається лише тоді, коли шкала опустилася до нуля (без окремого таймера).
+            float pressure = 1f + fightElapsed / PressureGrowthMs;
+            fightProgress += (IsFishInZone() ? 0.5f : -0.3f * pressure) * k;
             fightProgress = Math.Max(0f, Math.Min(100f, fightProgress));
 
             fightElapsed += dt;
@@ -515,7 +519,7 @@ namespace Fishing
             {
                 EndFight(true);
             }
-            else if (fightProgress <= 0f || fightElapsed >= FightTimeLimit)
+            else if (fightProgress <= 0f)
             {
                 EndFight(false);
             }
