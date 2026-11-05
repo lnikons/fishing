@@ -54,17 +54,10 @@ namespace Fishing
         private bool lastIsNewSpecies;
         private readonly HashSet<int> discoveredFishIds = new HashSet<int>();
 
-        // ТИМЧАСОВО до карток 20–21 (каталог і вибір риби на бекенді):
-        // кілька риб на моделі Fish, щоб екран результату мав що показати.
-        private static readonly List<Fish> TempFishCatalog = new List<Fish>
-        {
-            new Fish { Id = 1, Name = "Карась",       Rarity = Rarity.Common,    BasePrice = 5,   MinWeight = 0.2,  MaxWeight = 0.8 },
-            new Fish { Id = 2, Name = "Окунь",        Rarity = Rarity.Common,    BasePrice = 7,   MinWeight = 0.1,  MaxWeight = 0.6 },
-            new Fish { Id = 3, Name = "Щука",         Rarity = Rarity.Uncommon,  BasePrice = 15,  MinWeight = 1.0,  MaxWeight = 4.0 },
-            new Fish { Id = 4, Name = "Короп",        Rarity = Rarity.Rare,      BasePrice = 25,  MinWeight = 1.5,  MaxWeight = 6.0 },
-            new Fish { Id = 5, Name = "Сом",          Rarity = Rarity.Epic,      BasePrice = 50,  MinWeight = 5.0,  MaxWeight = 20.0 },
-            new Fish { Id = 6, Name = "Золота рибка", Rarity = Rarity.Legendary, BasePrice = 100, MinWeight = 0.05, MaxWeight = 0.2 },
-        };
+        // Локація і наживка для вибору риби при поклюванні.
+        // Поки немає магазину/гравця: стартова локація (Ставок) і без наживки.
+        private Fishing.Models.Location currentLocation = Catalog.GetLocation(1);
+        private Bait currentBait;
 
         // Масштаб екрана: 1.0 при 100%, 1.25 при 125% і т. д.
         // Гра малюється в логічних пікселях (як при 100%), а Graphics масштабує їх під екран.
@@ -600,20 +593,7 @@ namespace Fishing
 
         private Fish PickCaughtFish()
         {
-            // ТИМЧАСОВО: випадкова риба з тимчасового списку, рідкісні випадають рідше.
-            // Замінити на вибір з бекенду (картка 21).
-            int[] rarityWeights = { 50, 25, 15, 8, 2 }; // Common .. Legendary
-            int total = TempFishCatalog.Sum(f => rarityWeights[(int)f.Rarity]);
-            int roll = rng.Next(total);
-            foreach (Fish fish in TempFishCatalog)
-            {
-                roll -= rarityWeights[(int)fish.Rarity];
-                if (roll < 0)
-                {
-                    return fish;
-                }
-            }
-            return TempFishCatalog[0];
+            return FishPicker.Pick(currentLocation, currentBait, rng);
         }
 
         private void ShowCatchResult(Fish fish)

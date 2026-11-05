@@ -48,6 +48,8 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Models\Bait.cs" />
+    <Compile Include="Models\Fishpicker.cs" />
     <Compile Include="Form1.cs">
       <SubType>Form</SubType>
     </Compile>
