@@ -65,6 +65,73 @@
     <EmbeddedResource Include="Form1.resx">
       <DependentUpon>Form1.cs</DependentUpon>
     </EmbeddedResource>
+    <!-- Графіка гри (картка 16): вбудована в .exe, завантажується через LoadEmbeddedImage -->
+    <EmbeddedResource Include="Assets\Backgrounds\bg_lake.png">
+      <LogicalName>Fishing.Assets.Backgrounds.bg_lake.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Backgrounds\bg_river.png">
+      <LogicalName>Fishing.Assets.Backgrounds.bg_river.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Backgrounds\bg_sea.png">
+      <LogicalName>Fishing.Assets.Backgrounds.bg_sea.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_01_karas.png">
+      <LogicalName>Fishing.Assets.Fish.fish_01_karas.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_02_plotva.png">
+      <LogicalName>Fishing.Assets.Fish.fish_02_plotva.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_03_okun.png">
+      <LogicalName>Fishing.Assets.Fish.fish_03_okun.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_04_korop.png">
+      <LogicalName>Fishing.Assets.Fish.fish_04_korop.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_05_zolotyi_korop.png">
+      <LogicalName>Fishing.Assets.Fish.fish_05_zolotyi_korop.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_06_holovan.png">
+      <LogicalName>Fishing.Assets.Fish.fish_06_holovan.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_07_liashch.png">
+      <LogicalName>Fishing.Assets.Fish.fish_07_liashch.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_08_shchuka.png">
+      <LogicalName>Fishing.Assets.Fish.fish_08_shchuka.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_09_som.png">
+      <LogicalName>Fishing.Assets.Fish.fish_09_som.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_10_biluha.png">
+      <LogicalName>Fishing.Assets.Fish.fish_10_biluha.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_11_khamsa.png">
+      <LogicalName>Fishing.Assets.Fish.fish_11_khamsa.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_12_kambala.png">
+      <LogicalName>Fishing.Assets.Fish.fish_12_kambala.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_13_tunets.png">
+      <LogicalName>Fishing.Assets.Fish.fish_13_tunets.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_14_ryba_mech.png">
+      <LogicalName>Fishing.Assets.Fish.fish_14_ryba_mech.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_15_mehalodon.png">
+      <LogicalName>Fishing.Assets.Fish.fish_15_mehalodon.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Icons\icon_coin.png">
+      <LogicalName>Fishing.Assets.Icons.icon_coin.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Icons\icon_journal.png">
+      <LogicalName>Fishing.Assets.Icons.icon_journal.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Icons\icon_menu.png">
+      <LogicalName>Fishing.Assets.Icons.icon_menu.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Icons\icon_shop.png">
+      <LogicalName>Fishing.Assets.Icons.icon_shop.png</LogicalName>
+    </EmbeddedResource>
     <EmbeddedResource Include="Properties\Resources.resx">
       <Generator>ResXFileCodeGenerator</Generator>
       <LastGenOutput>Resources.Designer.cs</LastGenOutput>
