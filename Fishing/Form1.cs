@@ -4,6 +4,8 @@ using System.ComponentModel;
 using System.Data;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Imaging;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -99,6 +101,15 @@ namespace Fishing
         private float LogicalWidth => pnlGame.ClientSize.Width / DpiScale;
         private float LogicalHeight => pnlGame.ClientSize.Height / DpiScale;
 
+        // Графіка з картки 16: вбудовані в збірку PNG (Fishing/Assets)
+        private readonly Dictionary<int, Image> fishSprites = new Dictionary<int, Image>();      // Id риби → спрайт
+        private readonly Dictionary<int, Image> fishSilhouettes = new Dictionary<int, Image>();  // Id риби → темний силует
+        private readonly Dictionary<int, Image> backgrounds = new Dictionary<int, Image>();      // Id локації → фон
+        private readonly List<Image> loadedImages = new List<Image>();                            // усе, що треба звільнити
+        private Bitmap backgroundCache;   // фон, уже масштабований під розмір панелі (щоб не масштабувати щокадру)
+        private int backgroundCacheLocationId = -1;
+        private readonly PictureBox pbCoin = new PictureBox();
+
         // Ресурси для малювання: створюються один раз, а не в кожному кадрі.
         // Шрифти в пікселях, щоб масштаб не застосувався до них двічі.
         private readonly Pen rodPen = new Pen(Color.SaddleBrown, 3);
@@ -138,6 +149,8 @@ namespace Fishing
         {
             InitializeComponent();
 
+            LoadGameImages();
+
             // Фіксований розмір вікна: не можна тягнути краї і розгортати
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
@@ -161,6 +174,20 @@ namespace Fishing
             btnShop.Size = btnJournal.Size;
             btnShop.Location = new Point(btnJournal.Left, btnExit.Top);
             btnShop.UseVisualStyleBackColor = true;
+
+            // Іконки на кнопках меню і монета біля лічильника
+            SetButtonIcon(btnJournal, "Fishing.Assets.Icons.icon_journal", 30);
+            SetButtonIcon(btnShop, "Fishing.Assets.Icons.icon_shop", 30);
+            pbCoin.Image = LoadEmbeddedImage("Fishing.Assets.Icons.icon_coin");
+            if (pbCoin.Image != null)
+            {
+                loadedImages.Add(pbCoin.Image);
+                pbCoin.SizeMode = PictureBoxSizeMode.Zoom;
+                pbCoin.Size = new Size(28, 28);
+                pbCoin.Location = new Point(lblScore.Left, lblScore.Top + 2);
+                lblScore.Left += 34;
+                Controls.Add(pbCoin);
+            }
             btnShop.Click += (s, e) => { shopMessage = ""; ShowPanel(pnlShop); };
             pnlMenu.Controls.Add(btnShop);
             btnExit.Top = btnShop.Bottom + (btnJournal.Top - btnPlay.Bottom);
@@ -193,6 +220,7 @@ namespace Fishing
             btnMenu.TabStop = false;
             btnMenu.Visible = false;
             btnMenu.Click += (s, e) => ReturnToMenu();
+            SetButtonIcon(btnMenu, "Fishing.Assets.Icons.icon_menu", 20);
             Controls.Add(btnMenu);
             btnMenu.BringToFront(); // кнопка поверх гри і журналу
             btnExit.Click += (s, e) => Close();
@@ -237,6 +265,11 @@ namespace Fishing
             overlayBrush.Dispose();
             centerFormat.Dispose();
             rightFormat.Dispose();
+            backgroundCache?.Dispose();
+            foreach (Image image in loadedImages)
+            {
+                image.Dispose();
+            }
         }
 
         private static void EnableDoubleBuffering(Control control)
@@ -244,6 +277,127 @@ namespace Fishing
             typeof(Control)
                 .GetProperty("DoubleBuffered", BindingFlags.Instance | BindingFlags.NonPublic)
                 .SetValue(control, true, null);
+        }
+
+        private static Image LoadEmbeddedImage(string resourcePrefix)
+        {
+            // Шукаємо вбудований ресурс за початком імені, напр. «Fishing.Assets.Fish.fish_03_»
+            Assembly assembly = Assembly.GetExecutingAssembly();
+            string name = assembly.GetManifestResourceNames()
+                .FirstOrDefault(n => n.StartsWith(resourcePrefix, StringComparison.OrdinalIgnoreCase));
+            if (name == null)
+            {
+                return null; // графіки немає — гра намалює заглушку
+            }
+            using (Stream stream = assembly.GetManifestResourceStream(name))
+            using (Image image = Image.FromStream(stream))
+            {
+                // Копія в пам'яті: Image.FromStream вимагає, щоб потік жив увесь час
+                return new Bitmap(image);
+            }
+        }
+
+        private static Image MakeSilhouette(Image source)
+        {
+            // Той самий спрайт, але суцільно темний: колір замінюємо, прозорість лишаємо
+            var silhouette = new Bitmap(source.Width, source.Height, PixelFormat.Format32bppArgb);
+            var matrix = new ColorMatrix(new[]
+            {
+                new float[] { 0, 0, 0, 0, 0 },
+                new float[] { 0, 0, 0, 0, 0 },
+                new float[] { 0, 0, 0, 0, 0 },
+                new float[] { 0, 0, 0, 1, 0 },
+                new float[] { 0.27f, 0.27f, 0.31f, 0, 1 },
+            });
+            using (var attributes = new ImageAttributes())
+            using (Graphics g = Graphics.FromImage(silhouette))
+            {
+                attributes.SetColorMatrix(matrix);
+                g.DrawImage(source, new Rectangle(0, 0, source.Width, source.Height),
+                    0, 0, source.Width, source.Height, GraphicsUnit.Pixel, attributes);
+            }
+            return silhouette;
+        }
+
+        private void LoadGameImages()
+        {
+            foreach (Fish fish in Catalog.AllFish)
+            {
+                Image sprite = LoadEmbeddedImage($"Fishing.Assets.Fish.fish_{fish.Id:00}_");
+                if (sprite != null)
+                {
+                    fishSprites[fish.Id] = sprite;
+                    fishSilhouettes[fish.Id] = MakeSilhouette(sprite);
+                    loadedImages.Add(sprite);
+                    loadedImages.Add(fishSilhouettes[fish.Id]);
+                }
+            }
+
+            string[] backgroundNames = { "lake", "river", "sea" }; // Ставок, Річка, Море — у порядку Id локацій
+            for (int i = 0; i < backgroundNames.Length; i++)
+            {
+                Image background = LoadEmbeddedImage($"Fishing.Assets.Backgrounds.bg_{backgroundNames[i]}");
+                if (background != null)
+                {
+                    backgrounds[i + 1] = background;
+                    loadedImages.Add(background);
+                }
+            }
+        }
+
+        private void SetButtonIcon(Button button, string resourcePrefix, int logicalSize)
+        {
+            Image icon = LoadEmbeddedImage(resourcePrefix);
+            if (icon == null)
+            {
+                return;
+            }
+            int size = (int)Math.Round(logicalSize * DeviceDpi / 96f);
+            var scaled = new Bitmap(icon, new Size(size, size));
+            icon.Dispose();
+            loadedImages.Add(scaled);
+            button.Image = scaled;
+            button.ImageAlign = ContentAlignment.MiddleCenter;
+            button.TextImageRelation = TextImageRelation.ImageBeforeText;
+        }
+
+        private Bitmap GetScaledBackground(Size size)
+        {
+            // Масштабуємо фон під розмір панелі лише один раз для кожної локації
+            if (!backgrounds.TryGetValue(player.CurrentLocationId, out Image source) || size.Width <= 0 || size.Height <= 0)
+            {
+                return null;
+            }
+            if (backgroundCache != null && backgroundCacheLocationId == player.CurrentLocationId && backgroundCache.Size == size)
+            {
+                return backgroundCache;
+            }
+            backgroundCache?.Dispose();
+            backgroundCache = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppPArgb);
+            using (Graphics g = Graphics.FromImage(backgroundCache))
+            {
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.DrawImage(source, new Rectangle(0, 0, size.Width, size.Height));
+            }
+            backgroundCacheLocationId = player.CurrentLocationId;
+            return backgroundCache;
+        }
+
+        private void DrawFish(Graphics g, Fish fish, float centerX, float centerY, float width, bool discovered)
+        {
+            // Спрайт риби (або силует невідкритої); якщо графіки немає — проста заглушка
+            Dictionary<int, Image> set = discovered ? fishSprites : fishSilhouettes;
+            if (set.TryGetValue(fish.Id, out Image sprite))
+            {
+                float height = width * sprite.Height / sprite.Width;
+                var previous = g.InterpolationMode;
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                g.DrawImage(sprite, new RectangleF(centerX - width / 2, centerY - height / 2, width, height));
+                g.InterpolationMode = previous;
+                return;
+            }
+            DrawFishShape(g, centerX, centerY, width / 120f,
+                discovered ? RarityColor(fish.Rarity) : Color.FromArgb(70, 70, 80), discovered);
         }
 
         private void ShowPanel(Panel panel)
@@ -669,6 +823,13 @@ namespace Fishing
 
         private void pnlGame_Paint(object sender, PaintEventArgs e)
         {
+            // Фон локації: уже масштабований під панель, тому малюється швидко, без перерахунку
+            Bitmap background = GetScaledBackground(pnlGame.ClientSize);
+            if (background != null)
+            {
+                e.Graphics.DrawImageUnscaled(background, 0, 0);
+            }
+
             // Масштаб під DPI і згладжування ліній та тексту
             e.Graphics.ScaleTransform(DpiScale, DpiScale);
             e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
@@ -824,10 +985,10 @@ namespace Fishing
             g.DrawString("Зловлено!", resultTitleFont, Brushes.Black,
                 new RectangleF(cardLeft, cardTop + 10, cardWidth, 36), centerFormat);
 
-            // Проста риба-заглушка в кольорі рідкості (справжні спрайти — картка 16)
+            // Спрайт спійманої риби
             float fishX = cardLeft + cardWidth / 2;
-            float fishY = cardTop + 75;
-            DrawFishShape(g, fishX, fishY, 1f, rarityColor, true);
+            float fishY = cardTop + 70;
+            DrawFish(g, lastFish, fishX, fishY, 116, true);
 
             // Назва, рідкість, вага, ціна
             using (var rarityBrush = new SolidBrush(rarityColor))
@@ -956,7 +1117,7 @@ namespace Fishing
             if (!discovered)
             {
                 // Невідкритий вид: темний силует і знаки питання
-                DrawFishShape(g, centerX, fishY, 0.95f, Color.FromArgb(70, 70, 80), false);
+                DrawFish(g, fish, centerX, fishY, 120, false);
                 g.DrawString("???", resultTitleFont, Brushes.DimGray,
                     new RectangleF(card.X, card.Y + 78, card.Width, 34), centerFormat);
                 g.DrawString("Ще не спіймано", resultHintFont, Brushes.Gray,
@@ -965,7 +1126,7 @@ namespace Fishing
             }
 
             Color rarityColor = RarityColor(fish.Rarity);
-            DrawFishShape(g, centerX, fishY, 0.95f, rarityColor, true);
+            DrawFish(g, fish, centerX, fishY, 120, true);
 
             using (var rarityBrush = new SolidBrush(rarityColor))
             {
@@ -1128,9 +1289,24 @@ namespace Fishing
             bool current = player.CurrentLocationId == location.Id;
 
             g.FillRectangle(Brushes.White, card);
-            using (var band = new SolidBrush(LocationColor(location.Id)))
+            var band = new RectangleF(card.X, card.Y, card.Width, 34);
+            if (backgrounds.TryGetValue(location.Id, out Image thumbnail))
             {
-                g.FillRectangle(band, card.X, card.Y, card.Width, 34);
+                // Смужка фону біля лінії горизонту, затемнена, щоб назву було добре видно
+                float sourceHeight = thumbnail.Width * band.Height / band.Width;
+                var source = new RectangleF(0, thumbnail.Height * 0.36f - sourceHeight / 2, thumbnail.Width, sourceHeight);
+                g.DrawImage(thumbnail, band, source, GraphicsUnit.Pixel);
+                using (var shade = new SolidBrush(Color.FromArgb(90, 0, 0, 0)))
+                {
+                    g.FillRectangle(shade, band);
+                }
+            }
+            else
+            {
+                using (var bandBrush = new SolidBrush(LocationColor(location.Id)))
+                {
+                    g.FillRectangle(bandBrush, band);
+                }
             }
             g.DrawRectangle(current ? Pens.DarkOrange : Pens.DarkGray, card.X, card.Y, card.Width, card.Height);
             g.DrawString(location.Name, shopNameFont, Brushes.White, new RectangleF(card.X, card.Y + 4, card.Width, 26), centerFormat);
