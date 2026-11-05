@@ -130,6 +130,9 @@ namespace Fishing
         private readonly System.Windows.Forms.Timer tmrReaction = new System.Windows.Forms.Timer { Interval = 1500 };
         private readonly System.Windows.Forms.Timer tmrFight = new System.Windows.Forms.Timer { Interval = 16 };
 
+        // Повідомлення («Риба втекла», «Не вистачає монет» тощо) самі зникають через 3 с
+        private readonly System.Windows.Forms.Timer tmrMessage = new System.Windows.Forms.Timer { Interval = 3000 };
+
         // Реальний час між тіками: таймер WinForms може тікати рідше за 16 мс,
         // тому рух рахується від справжнього часу, а не від кількості тіків
         private readonly Stopwatch castClock = new Stopwatch();
@@ -232,6 +235,7 @@ namespace Fishing
             tmrBite.Tick += TmrBite_Tick;
             tmrReaction.Tick += TmrReaction_Tick;
             tmrFight.Tick += TmrFight_Tick;
+            tmrMessage.Tick += TmrMessage_Tick;
 
             // Подвійне буферизування прибирає мерехтіння при малюванні
             EnableDoubleBuffering(pnlGame);
@@ -253,6 +257,7 @@ namespace Fishing
             tmrBite.Dispose();
             tmrReaction.Dispose();
             tmrFight.Dispose();
+            tmrMessage.Dispose();
             rodPen.Dispose();
             alertFont.Dispose();
             statusFont.Dispose();
@@ -400,8 +405,39 @@ namespace Fishing
                 discovered ? RarityColor(fish.Rarity) : Color.FromArgb(70, 70, 80), discovered);
         }
 
+        private void ShowStatus(string text)
+        {
+            statusText = text;
+            tmrMessage.Stop();
+            tmrMessage.Start(); // відлік 3 с починається заново з кожним новим повідомленням
+        }
+
+        private void ShowShopMessage(string text)
+        {
+            shopMessage = text;
+            tmrMessage.Stop();
+            tmrMessage.Start();
+        }
+
+        private void ClearMessages()
+        {
+            tmrMessage.Stop();
+            statusText = "";
+            shopMessage = "";
+        }
+
+        private void TmrMessage_Tick(object sender, EventArgs e)
+        {
+            ClearMessages();
+            pnlGame.Invalidate();
+            pnlShop.Invalidate();
+        }
+
         private void ShowPanel(Panel panel)
         {
+            // Повідомлення попереднього екрана не переносяться на новий
+            ClearMessages();
+
             pnlMenu.Visible = false;
             pnlGame.Visible = false;
             pnlJournal.Visible = false;
@@ -663,7 +699,7 @@ namespace Fishing
             fishJumpScale = 1f - 0.5f * difficulty;          // складні частіше міняють напрям
 
             PickNewFishTarget();
-            statusText = "Риба на гачку!";
+            ShowStatus("Риба на гачку!");
             fightClock.Restart();
             tmrFight.Start();
         }
@@ -696,7 +732,7 @@ namespace Fishing
             }
             else
             {
-                statusText = "Риба втекла";
+                ShowStatus("Риба втекла");
             }
             pnlGame.Invalidate();
         }
@@ -721,7 +757,7 @@ namespace Fishing
             // Вікно реакції минуло без кліку
             tmrReaction.Stop();
             isBiting = false;
-            statusText = "Риба втекла";
+            ShowStatus("Риба втекла");
             sinceReactionTimeout.Restart();
             pnlGame.Invalidate();
         }
@@ -1168,20 +1204,20 @@ namespace Fishing
         {
             if (player.Money < location.Price)
             {
-                shopMessage = "Не вистачає монет";
+                ShowShopMessage("Не вистачає монет");
                 return;
             }
             player.Money -= location.Price;
             player.UnlockedLocationIds.Add(location.Id);
             player.CurrentLocationId = location.Id;
-            shopMessage = $"Відкрито локацію «{location.Name}»";
+            ShowShopMessage($"Відкрито локацію «{location.Name}»");
             UpdateCoinsLabel();
         }
 
         private void SelectLocation(Location location)
         {
             player.CurrentLocationId = location.Id;
-            shopMessage = $"Поточна локація: {location.Name}";
+            ShowShopMessage($"Поточна локація: {location.Name}");
         }
 
         private void BuyUpgrade(Upgrade upgrade)
@@ -1190,12 +1226,12 @@ namespace Fishing
             int price = UpgradePrice(upgrade, level);
             if (level >= upgrade.MaxLevel || player.Money < price)
             {
-                shopMessage = level >= upgrade.MaxLevel ? "Уже максимальний рівень" : "Не вистачає монет";
+                ShowShopMessage(level >= upgrade.MaxLevel ? "Уже максимальний рівень" : "Не вистачає монет");
                 return;
             }
             player.Money -= price;
             player.UpgradeLevels[upgrade.Id] = level + 1;
-            shopMessage = $"Куплено: {upgrade.Name}, рівень {level + 1}";
+            ShowShopMessage($"Куплено: {upgrade.Name}, рівень {level + 1}");
             UpdateCoinsLabel();
         }
 
@@ -1218,7 +1254,7 @@ namespace Fishing
                     }
                     else
                     {
-                        shopMessage = "Не вистачає монет";
+                        ShowShopMessage("Не вистачає монет");
                     }
                     pnlShop.Invalidate();
                     return;
