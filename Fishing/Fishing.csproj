@@ -48,16 +48,16 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Models\Bait.cs" />
-    <Compile Include="Models\Fishpicker.cs" />
     <Compile Include="Form1.cs">
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="Form1.Designer.cs">
       <DependentUpon>Form1.cs</DependentUpon>
     </Compile>
+    <Compile Include="Models\Bait.cs" />
     <Compile Include="Models\Catalog.cs" />
     <Compile Include="Models\Fish.cs" />
+    <Compile Include="Models\FishPicker.cs" />
     <Compile Include="Models\Location.cs" />
     <Compile Include="Models\Player.cs" />
     <Compile Include="Models\Rarity.cs" />
