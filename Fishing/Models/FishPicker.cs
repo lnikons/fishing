@@ -13,11 +13,11 @@ namespace Fishing.Models
         {
             switch (rarity)
             {
-                case Rarity.Common: return 60;
+                case Rarity.Common: return 50;
                 case Rarity.Uncommon: return 25;
-                case Rarity.Rare: return 10;
-                case Rarity.Epic: return 4;
-                case Rarity.Legendary: return 1;
+                case Rarity.Rare: return 15;
+                case Rarity.Epic: return 8;
+                case Rarity.Legendary: return 2;
                 default: return 1;
             }
         }
