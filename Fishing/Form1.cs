@@ -58,11 +58,7 @@ namespace Fishing
 
         // Екран результату вилову
         private bool isShowingResult;
-        private Fish lastFish;
-        private double lastWeight;
-        private int lastPrice;
-        private bool lastIsNewSpecies;
-        private readonly HashSet<int> discoveredFishIds = new HashSet<int>();
+        private CatchResult lastCatch;   // результат останньої ловлі (CatchService, картка 22)
 
         // Журнал риб: скільки разів спіймано кожен вид і найбільша вага
         private readonly Dictionary<int, int> catchCounts = new Dictionary<int, int>();
@@ -82,21 +78,11 @@ namespace Fishing
         private string shopMessage = "";
         private RectangleF? hoveredShopRect;  // кнопка магазину під курсором
         private Image coinImage;              // монетка для цін у магазині
+        private readonly Dictionary<Button, Image> buttonIcons = new Dictionary<Button, Image>(); // іконки кнопок меню
 
         // Кнопки, намальовані на панелі магазину: прямокутник, чи активна, що робити при кліку
         private readonly List<(RectangleF Rect, bool Enabled, Action OnClick)> shopButtons =
             new List<(RectangleF Rect, bool Enabled, Action OnClick)>();
-
-        // ТИМЧАСОВО до бекенду (картки 20/24): покращення на моделі Upgrade.
-        // ValuePerLevel — приріст ефекту за рівень: пікселі дальності, секунди, частка зони або ціни.
-        private static readonly List<Upgrade> TempUpgrades = new List<Upgrade>
-        {
-            new Upgrade { Id = 4, Name = "Краща вудка",    Description = "Ширша зона лову",      Type = UpgradeType.CatchBar,       MaxLevel = 3, BasePrice = 150, ValuePerLevel = 2.5 },
-            new Upgrade { Id = 1, Name = "Довга волосінь", Description = "Далі закидання",       Type = UpgradeType.CastRange,      MaxLevel = 3, BasePrice = 100, ValuePerLevel = 50 },
-            new Upgrade { Id = 2, Name = "Смачна наживка", Description = "Швидше клює",          Type = UpgradeType.BiteSpeed,      MaxLevel = 3, BasePrice = 120, ValuePerLevel = 0.5 },
-            new Upgrade { Id = 3, Name = "Швидка реакція", Description = "Довше вікно підсічки", Type = UpgradeType.ReactionWindow, MaxLevel = 3, BasePrice = 100, ValuePerLevel = 0.25 },
-            new Upgrade { Id = 5, Name = "Торговець",      Description = "+10% до ціни риби",    Type = UpgradeType.SellBonus,      MaxLevel = 3, BasePrice = 200, ValuePerLevel = 0.10 },
-        };
 
         // Масштаб екрана: 1.0 при 100%, 1.25 при 125% і т. д.
         // Гра малюється в логічних пікселях (як при 100%), а Graphics масштабує їх під екран.
@@ -369,24 +355,26 @@ namespace Fishing
             var scaled = new Bitmap(icon, new Size(size, size));
             icon.Dispose();
             loadedImages.Add(scaled);
-            button.Image = scaled;
-            CenterIconAndText(button);
-            button.SizeChanged += (s, e) => CenterIconAndText(button); // після масштабування під DPI
+
+            // Стандартна кнопка WinForms не вміє центрувати пару «іконка + текст»
+            // (при різному масштабі екрана іконка налазила на текст), тому іконку малюємо самі
+            buttonIcons[button] = scaled;
+            button.Image = null;
+            button.TextAlign = ContentAlignment.MiddleCenter;
+            LayoutIconButton(button);
+            button.SizeChanged += (s, e) => LayoutIconButton(button); // після масштабування під DPI
+            button.Paint += IconButton_Paint;
         }
 
-        private void CenterIconAndText(Button button)
-        {
-            // WinForms не центрує пару «іконка + текст», тому ставимо їх ліворуч і рахуємо відступ самі
-            if (button.Image == null)
-            {
-                return;
-            }
-            int gap = (int)Math.Round(6 * DeviceDpi / 96f);
-            Size text = TextRenderer.MeasureText(button.Text, button.Font);
-            int content = button.Image.Width + gap + text.Width;
+        private int IconGap => (int)Math.Round(6 * DeviceDpi / 96f);
 
-            // Якщо іконка з текстом не влазять (великий масштаб екрана), розширюємо кнопку,
-            // інакше текст переноситься і обрізається
+        private void LayoutIconButton(Button button)
+        {
+            Image icon = buttonIcons[button];
+            Size text = TextRenderer.MeasureText(button.Text, button.Font);
+            int content = icon.Width + IconGap + text.Width;
+
+            // Якщо іконка з текстом не влазять, розширюємо кнопку, інакше текст переноситься і обрізається
             int margin = (int)Math.Round(10 * DeviceDpi / 96f);
             int needed = content + 2 * margin + (button.Width - button.ClientSize.Width);
             if (button.Width < needed)
@@ -399,11 +387,22 @@ namespace Fishing
                 button.Width = needed; // SizeChanged викличе цей метод ще раз уже з новою шириною
                 return;
             }
-            int left = Math.Max(0, (button.ClientSize.Width - content) / 2);
-            button.TextImageRelation = TextImageRelation.ImageBeforeText;
-            button.ImageAlign = ContentAlignment.MiddleLeft;
-            button.TextAlign = ContentAlignment.MiddleLeft;
-            button.Padding = new Padding(left, 0, 0, 0);
+
+            // Ліворуч резервуємо місце під іконку: текст центрується в решті кнопки,
+            // і тоді пара «іконка + текст» опиняється рівно по центру
+            button.Padding = new Padding(icon.Width + IconGap, 0, 0, 0);
+            button.Invalidate();
+        }
+
+        private void IconButton_Paint(object sender, PaintEventArgs e)
+        {
+            var button = (Button)sender;
+            Image icon = buttonIcons[button];
+            Size text = TextRenderer.MeasureText(button.Text, button.Font);
+            int content = icon.Width + IconGap + text.Width;
+            int x = (button.ClientSize.Width - content) / 2;
+            int y = (button.ClientSize.Height - icon.Height) / 2;
+            e.Graphics.DrawImage(icon, x, y, icon.Width, icon.Height);
         }
 
         private Bitmap GetScaledBackground(Size size)
@@ -778,9 +777,9 @@ namespace Fishing
             isHolding = false;
             if (caught)
             {
-                // За спійману рибу нараховується її ціна
+                // Рибу одразу продаємо: монети нараховує CatchService.Sell
                 ShowCatchResult(hookedFish);
-                player.Money += lastPrice;
+                CatchService.Sell(player, lastCatch);
                 UpdateCoinsLabel();
             }
             else
@@ -994,7 +993,7 @@ namespace Fishing
                 new RectangleF(LogicalWidth - 200, 8, 190, 24), rightFormat);
 
             // Екран результату поверх гри
-            if (isShowingResult && lastFish != null)
+            if (isShowingResult && lastCatch != null)
             {
                 DrawResultCard(e.Graphics);
             }
@@ -1104,34 +1103,8 @@ namespace Fishing
 
         private void DrawDepthMarkers(Graphics g)
         {
-            // Буйки на лінії падіння поплавця: з цієї відстані починає траплятися риба такої рідкості
+            // Кольорові буйки дальності прибрано: лишився тільки маркер падіння під час заряду
             float waterY = LogicalHeight - 100;
-            Location location = Catalog.GetLocation(player.CurrentLocationId);
-            foreach (Rarity rarity in location.Fishes.Select(f => f.Rarity).Distinct())
-            {
-                float required = RequiredCastDistance(rarity);
-                if (required <= 0)
-                {
-                    continue;
-                }
-                float x = rodTip.X + required;
-                using (var buoy = new SolidBrush(Color.FromArgb(200, RarityColor(rarity))))
-                {
-                    g.FillEllipse(buoy, x - 5, waterY - 5, 10, 10);
-                }
-                g.DrawEllipse(Pens.White, x - 5, waterY - 5, 10, 10);
-                g.DrawLine(Pens.White, x, waterY - 5, x, waterY - 14);
-            }
-
-            // Сірий буйок: далі цієї межі найдешевша (звичайна) риба вже не клює
-            if (location.Fishes.Any(f => f.Rarity == Rarity.Common))
-            {
-                float x = rodTip.X + MaxCastDistance(Rarity.Common);
-                g.FillEllipse(Brushes.Gray, x - 5, waterY - 5, 10, 10);
-                g.DrawEllipse(Pens.White, x - 5, waterY - 5, 10, 10);
-                g.DrawLine(Pens.White, x - 4, waterY - 4, x + 4, waterY + 4);
-                g.DrawLine(Pens.White, x - 4, waterY + 4, x + 4, waterY - 4);
-            }
 
             // Під час заряду: куди впаде поплавець
             if (isCharging)
@@ -1156,21 +1129,16 @@ namespace Fishing
 
         private void ShowCatchResult(Fish fish)
         {
-            lastFish = fish;
-            lastWeight = fish.MinWeight + rng.NextDouble() * (fish.MaxWeight - fish.MinWeight);
-            // Ціна залежить від ваги: найменша риба ×0,75, рекордна ×1,25, у середньому базова ціна
-            double weightShare = fish.MaxWeight > fish.MinWeight
-                ? (lastWeight - fish.MinWeight) / (fish.MaxWeight - fish.MinWeight)
-                : 0.5;
-            double sellBonus = 1 + UpgradeValue(UpgradeType.SellBonus); // «Торговець»: +10% за рівень
-            lastPrice = (int)Math.Round(fish.BasePrice * (0.75 + 0.5 * weightShare) * sellBonus);
-            lastIsNewSpecies = discoveredFishIds.Add(fish.Id); // true, якщо цей вид ще не ловили
+            // Обробка улову — логіка бекенду (картка 22): вага, ціна з бонусом «Торговця»,
+            // відкриття виду в журналі гравця
+            double weight = CatchService.RollWeight(fish, rng);
+            lastCatch = CatchService.ProcessCatch(player, fish, weight, UpgradeValue(UpgradeType.SellBonus));
 
-            // Облік для журналу
+            // Статистика для карток журналу (кількість і рекорд) — лише для відображення
             catchCounts[fish.Id] = (catchCounts.TryGetValue(fish.Id, out int count) ? count : 0) + 1;
-            if (!bestWeights.TryGetValue(fish.Id, out double best) || lastWeight > best)
+            if (!bestWeights.TryGetValue(fish.Id, out double best) || weight > best)
             {
-                bestWeights[fish.Id] = lastWeight;
+                bestWeights[fish.Id] = weight;
             }
             statusText = "";
             isShowingResult = true;
@@ -1227,7 +1195,7 @@ namespace Fishing
             g.FillRectangle(Brushes.White, cardLeft, cardTop, cardWidth, cardHeight);
             g.DrawRectangle(Pens.Black, cardLeft, cardTop, cardWidth, cardHeight);
 
-            Color rarityColor = RarityColor(lastFish.Rarity);
+            Color rarityColor = RarityColor(lastCatch.Fish.Rarity);
 
             // Заголовок
             g.DrawString("Зловлено!", resultTitleFont, Brushes.Black,
@@ -1236,23 +1204,23 @@ namespace Fishing
             // Спрайт спійманої риби
             float fishX = cardLeft + cardWidth / 2;
             float fishY = cardTop + 70;
-            DrawFish(g, lastFish, fishX, fishY, 116, true);
+            DrawFish(g, lastCatch.Fish, fishX, fishY, 116, true);
 
             // Назва, рідкість, вага, ціна
             using (var rarityBrush = new SolidBrush(rarityColor))
             {
-                g.DrawString(lastFish.Name, resultTitleFont, rarityBrush,
+                g.DrawString(lastCatch.Fish.Name, resultTitleFont, rarityBrush,
                     new RectangleF(cardLeft, cardTop + 98, cardWidth, 34), centerFormat);
-                g.DrawString(RarityName(lastFish.Rarity), resultTextFont, rarityBrush,
+                g.DrawString(RarityName(lastCatch.Fish.Rarity), resultTextFont, rarityBrush,
                     new RectangleF(cardLeft, cardTop + 130, cardWidth, 24), centerFormat);
             }
-            g.DrawString($"Вага: {FormatWeight(lastWeight)}", resultTextFont, Brushes.Black,
+            g.DrawString($"Вага: {FormatWeight(lastCatch.Weight)}", resultTextFont, Brushes.Black,
                 new RectangleF(cardLeft, cardTop + 156, cardWidth, 24), centerFormat);
-            g.DrawString($"Ціна: {lastPrice} {CoinsWord(lastPrice)}", resultTextFont, Brushes.Black,
+            g.DrawString($"Ціна: {lastCatch.Price} {CoinsWord(lastCatch.Price)}", resultTextFont, Brushes.Black,
                 new RectangleF(cardLeft, cardTop + 182, cardWidth, 24), centerFormat);
 
             // Позначка нового виду в правому верхньому куті картки
-            if (lastIsNewSpecies)
+            if (lastCatch.IsNewSpecies)
             {
                 var badge = new RectangleF(cardLeft + cardWidth - 128, cardTop - 14, 140, 30);
                 g.FillRectangle(Brushes.Gold, badge);
@@ -1310,7 +1278,7 @@ namespace Fishing
             // Заголовок і лічильник відкритих видів з усього каталогу
             g.DrawString("Журнал риб", resultTitleFont, Brushes.Black,
                 new RectangleF(0, 6, width, 34), centerFormat);
-            g.DrawString($"Відкрито видів: {discoveredFishIds.Count} з {Catalog.AllFish.Count()}", resultTextFont, Brushes.DimGray,
+            g.DrawString(JournalService.GetProgressText(player), resultTextFont, Brushes.DimGray,
                 new RectangleF(0, 36, width, 24), centerFormat);
 
             // Вкладки локацій
@@ -1322,8 +1290,8 @@ namespace Fishing
                 Location location = Catalog.Locations[i];
                 var rect = new RectangleF(tabsLeft + i * (tabWidth + tabGap), tabTop, tabWidth, tabHeight);
                 bool active = location.Id == journalLocationId;
-                bool unlocked = player.UnlockedLocationIds.Contains(location.Id);
-                int found = location.Fishes.Count(f => discoveredFishIds.Contains(f.Id));
+                bool unlocked = ShopService.IsLocationUnlocked(player, location);
+                int found = JournalService.GetEntries(player, location.Id).Count(entry => entry.IsDiscovered);
 
                 using (var tabBrush = new SolidBrush(active ? LocationColor(location.Id) : Color.FromArgb(225, 225, 225)))
                 {
@@ -1337,24 +1305,26 @@ namespace Fishing
 
             // 5 карток видів обраної локації
             Location shown = Catalog.GetLocation(journalLocationId);
+            List<JournalEntry> entries = JournalService.GetEntries(player, shown.Id);
             const float cardWidth = 140, cardHeight = 196, gap = 12, cardsTop = 112;
-            float cardsLeft = (width - (shown.Fishes.Count * cardWidth + (shown.Fishes.Count - 1) * gap)) / 2;
-            for (int i = 0; i < shown.Fishes.Count; i++)
+            float cardsLeft = (width - (entries.Count * cardWidth + (entries.Count - 1) * gap)) / 2;
+            for (int i = 0; i < entries.Count; i++)
             {
-                DrawJournalCard(g, shown.Fishes[i], new RectangleF(cardsLeft + i * (cardWidth + gap), cardsTop, cardWidth, cardHeight));
+                DrawJournalCard(g, entries[i], new RectangleF(cardsLeft + i * (cardWidth + gap), cardsTop, cardWidth, cardHeight));
             }
 
             // Підказка для закритої локації
-            if (!player.UnlockedLocationIds.Contains(shown.Id))
+            if (!ShopService.IsLocationUnlocked(player, shown))
             {
                 g.DrawString($"Локацію «{shown.Name}» можна відкрити в магазині за {shown.Price} {CoinsWord(shown.Price)}",
                     resultHintFont, Brushes.DimGray, new RectangleF(0, cardsTop + cardHeight + 10, width, 22), centerFormat);
             }
         }
 
-        private void DrawJournalCard(Graphics g, Fish fish, RectangleF card)
+        private void DrawJournalCard(Graphics g, JournalEntry entry, RectangleF card)
         {
-            bool discovered = discoveredFishIds.Contains(fish.Id);
+            Fish fish = entry.Fish;
+            bool discovered = entry.IsDiscovered;
 
             using (var cardBrush = new SolidBrush(discovered ? Color.White : Color.FromArgb(232, 235, 240)))
             using (var path = RoundedRect(card, 10))
@@ -1377,7 +1347,7 @@ namespace Fishing
                     g.FillEllipse(badgeBrush, badge);
                 }
                 g.DrawString("?", shopButtonFont, Brushes.White, badge, centerFormat);
-                g.DrawString("???", resultTitleFont, Brushes.DimGray,
+                g.DrawString(entry.DisplayName, resultTitleFont, Brushes.DimGray,
                     new RectangleF(card.X, card.Y + 78, card.Width, 34), centerFormat);
                 g.DrawString("Ще не спіймано", resultHintFont, Brushes.Gray,
                     new RectangleF(card.X, card.Y + 116, card.Width, 22), centerFormat);
@@ -1405,36 +1375,33 @@ namespace Fishing
                 new RectangleF(card.X, card.Y + 172, card.Width, 20), centerFormat);
         }
 
-        private static int UpgradePrice(Upgrade upgrade, int currentLevel)
+        private int UpgradePrice(Upgrade upgrade)
         {
-            // Кожен наступний рівень удвічі дорожчий: 100, 200, 400
-            return upgrade.BasePrice * (1 << currentLevel);
+            // Ціна наступного рівня з ShopService: 100, 200, 400; -1, якщо вже максимум
+            return ShopService.GetUpgradePrice(player, upgrade);
         }
 
         private int UpgradeLevel(Upgrade upgrade)
         {
-            return player.UpgradeLevels.TryGetValue(upgrade.Id, out int level) ? level : 0;
+            return ShopService.GetUpgradeLevel(player, upgrade.Id);
         }
 
         private double UpgradeValue(UpgradeType type)
         {
-            // Ефект = куплений рівень × приріст за рівень; 0, якщо покращення не куплено
-            Upgrade upgrade = TempUpgrades.FirstOrDefault(u => u.Type == type);
-            return upgrade == null ? 0 : UpgradeLevel(upgrade) * upgrade.ValuePerLevel;
+            // Ефект покращення = куплений рівень × приріст за рівень (ShopService, картка 24)
+            return ShopService.GetUpgradeValue(player, type);
         }
 
         private void BuyLocation(Location location)
         {
-            if (player.Money < location.Price)
+            // Купівля з перевіркою балансу — ShopService; повідомлення для гравця теж звідти
+            PurchaseResult result = ShopService.BuyLocation(player, location.Id);
+            ShowShopMessage(result.Message);
+            if (result.Success)
             {
-                ShowShopMessage("Не вистачає монет");
-                return;
+                player.CurrentLocationId = location.Id; // одразу переходимо на куплену локацію
+                UpdateCoinsLabel();
             }
-            player.Money -= location.Price;
-            player.UnlockedLocationIds.Add(location.Id);
-            player.CurrentLocationId = location.Id;
-            ShowShopMessage($"Відкрито локацію «{location.Name}»");
-            UpdateCoinsLabel();
         }
 
         private void SelectLocation(Location location)
@@ -1445,17 +1412,12 @@ namespace Fishing
 
         private void BuyUpgrade(Upgrade upgrade)
         {
-            int level = UpgradeLevel(upgrade);
-            int price = UpgradePrice(upgrade, level);
-            if (level >= upgrade.MaxLevel || player.Money < price)
+            PurchaseResult result = ShopService.BuyUpgrade(player, upgrade.Id);
+            ShowShopMessage(result.Message);
+            if (result.Success)
             {
-                ShowShopMessage(level >= upgrade.MaxLevel ? "Уже максимальний рівень" : "Не вистачає монет");
-                return;
+                UpdateCoinsLabel();
             }
-            player.Money -= price;
-            player.UpgradeLevels[upgrade.Id] = level + 1;
-            ShowShopMessage($"Куплено: {upgrade.Name}, рівень {level + 1}");
-            UpdateCoinsLabel();
         }
 
         private void PnlShop_MouseClick(object sender, MouseEventArgs e)
@@ -1471,14 +1433,8 @@ namespace Fishing
             {
                 if (button.Rect.Contains(point))
                 {
-                    if (button.Enabled)
-                    {
-                        button.OnClick();
-                    }
-                    else
-                    {
-                        ShowShopMessage("Не вистачає монет");
-                    }
+                    // Навіть для неактивної кнопки викликаємо купівлю: ShopService поверне причину відмови
+                    button.OnClick();
                     pnlShop.Invalidate();
                     return;
                 }
@@ -1645,9 +1601,9 @@ namespace Fishing
             DrawSectionTitle(g, "Покращення", 26, 198);
             const float upWidth = 140, upHeight = 172, upGap = 12, upTop = 220;
             float upLeft = (width - (5 * upWidth + 4 * upGap)) / 2;
-            for (int i = 0; i < TempUpgrades.Count; i++)
+            for (int i = 0; i < UpgradeCatalog.All.Count; i++)
             {
-                DrawUpgradeCard(g, TempUpgrades[i], new RectangleF(upLeft + i * (upWidth + upGap), upTop, upWidth, upHeight));
+                DrawUpgradeCard(g, UpgradeCatalog.All[i], new RectangleF(upLeft + i * (upWidth + upGap), upTop, upWidth, upHeight));
             }
         }
 
@@ -1662,7 +1618,7 @@ namespace Fishing
 
         private void DrawLocationCard(Graphics g, Location location, RectangleF card)
         {
-            bool unlocked = player.UnlockedLocationIds.Contains(location.Id);
+            bool unlocked = ShopService.IsLocationUnlocked(player, location);
             bool current = player.CurrentLocationId == location.Id;
 
             DrawCard(g, card, current ? Color.FromArgb(240, 150, 40) : Color.FromArgb(214, 220, 228));
@@ -1773,7 +1729,7 @@ namespace Fishing
         {
             int level = UpgradeLevel(upgrade);
             bool maxed = level >= upgrade.MaxLevel;
-            int price = UpgradePrice(upgrade, level);
+            int price = UpgradePrice(upgrade);
             Color color = UpgradeColor(upgrade.Type);
 
             DrawCard(g, card, Color.FromArgb(214, 220, 228));

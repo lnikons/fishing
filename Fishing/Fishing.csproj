@@ -56,12 +56,19 @@
     </Compile>
     <Compile Include="Models\Bait.cs" />
     <Compile Include="Models\Catalog.cs" />
+    <Compile Include="Models\CatchResult.cs" />
+    <Compile Include="Models\CatchService.cs" />
     <Compile Include="Models\Fish.cs" />
     <Compile Include="Models\FishPicker.cs" />
+    <Compile Include="Models\JournalEntry.cs" />
+    <Compile Include="Models\JournalService.cs" />
     <Compile Include="Models\Location.cs" />
     <Compile Include="Models\Player.cs" />
+    <Compile Include="Models\PurchaseResult.cs" />
     <Compile Include="Models\Rarity.cs" />
+    <Compile Include="Models\ShopService.cs" />
     <Compile Include="Models\Upgrade.cs" />
+    <Compile Include="Models\UpgradeCatalog.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <EmbeddedResource Include="Form1.resx">
