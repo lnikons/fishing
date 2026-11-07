@@ -66,6 +66,8 @@
     <Compile Include="Models\Player.cs" />
     <Compile Include="Models\PurchaseResult.cs" />
     <Compile Include="Models\Rarity.cs" />
+    <Compile Include="Models\SaveData.cs" />
+    <Compile Include="Models\SaveService.cs" />
     <Compile Include="Models\ShopService.cs" />
     <Compile Include="Models\Upgrade.cs" />
     <Compile Include="Models\UpgradeCatalog.cs" />

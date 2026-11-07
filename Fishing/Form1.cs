@@ -240,8 +240,32 @@ namespace Fishing
             pnlGame.MouseDown += PnlGame_MouseDown;
             pnlGame.MouseUp += PnlGame_MouseUp;
 
+            // Прогрес з минулої гри; при виході — зберігаємо
+            LoadProgress();
+            FormClosing += (s, e) => SaveProgress();
+
             // Звільняємо таймери і ресурси малювання при закритті вікна
             FormClosed += (s, e) => DisposeGameResources();
+        }
+
+        private void LoadProgress()
+        {
+            // Збереження і завантаження — логіка бекенду (картка 25, SaveService).
+            // Файлу ще немає — це перша гра, починаємо з нуля.
+            if (SaveService.HasSave() && !SaveService.Load(player, catchCounts, bestWeights, out string error))
+            {
+                MessageBox.Show(error + "\nГра почнеться з нуля.", "Fishing", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            }
+            UpdateCoinsLabel();
+        }
+
+        private void SaveProgress()
+        {
+            // Автозбереження після улову, покупок, зміни локації і при виході з гри
+            if (!SaveService.Save(player, catchCounts, bestWeights, out string error))
+            {
+                ShowStatus(error);
+            }
         }
 
         private void DisposeGameResources()
@@ -781,6 +805,7 @@ namespace Fishing
                 ShowCatchResult(hookedFish);
                 CatchService.Sell(player, lastCatch);
                 UpdateCoinsLabel();
+                SaveProgress();
             }
             else
             {
@@ -1401,6 +1426,7 @@ namespace Fishing
             {
                 player.CurrentLocationId = location.Id; // одразу переходимо на куплену локацію
                 UpdateCoinsLabel();
+                SaveProgress();
             }
         }
 
@@ -1408,6 +1434,7 @@ namespace Fishing
         {
             player.CurrentLocationId = location.Id;
             ShowShopMessage($"Поточна локація: {location.Name}");
+            SaveProgress();
         }
 
         private void BuyUpgrade(Upgrade upgrade)
@@ -1417,6 +1444,7 @@ namespace Fishing
             if (result.Success)
             {
                 UpdateCoinsLabel();
+                SaveProgress();
             }
         }
 
