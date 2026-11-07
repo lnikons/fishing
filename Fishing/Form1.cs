@@ -18,7 +18,9 @@ namespace Fishing
     public partial class Form1 : Form
     {
         // Точка кінчика вудки і поточна позиція поплавця
-        private readonly PointF rodTip = new PointF(84, 112); // кінчик вудки, що тримається на містку зліва
+        private readonly PointF rodTip = new PointF(84, 200); // кінчик вудки (арт-піксель 42,100); основа стоїть на помості з фону
+        private PointF FloatRest => new PointF(rodTip.X, rodTip.Y + 16); // поплавець висить під кінчиком
+        private PointF castFrom;                                      // звідки почався політ (для дуги)
         private PointF floatPos;
         private PointF floatTarget;
 
@@ -78,7 +80,6 @@ namespace Fishing
         private string shopMessage = "";
         private RectangleF? hoveredShopRect;  // кнопка магазину під курсором
         private Image coinImage;              // монетка для цін у магазині
-        private readonly Dictionary<Button, Image> buttonIcons = new Dictionary<Button, Image>(); // іконки кнопок меню
 
         // Кнопки, намальовані на панелі магазину: прямокутник, чи активна, що робити при кліку
         private readonly List<(RectangleF Rect, bool Enabled, Action OnClick)> shopButtons =
@@ -111,6 +112,11 @@ namespace Fishing
         private readonly Font shopNameFont = new Font("Segoe UI", 17F, FontStyle.Bold, GraphicsUnit.Pixel);
         private readonly Font shopTextFont = new Font("Segoe UI", 13F, FontStyle.Regular, GraphicsUnit.Pixel);
         private readonly Font shopButtonFont = new Font("Segoe UI", 14F, FontStyle.Bold, GraphicsUnit.Pixel);
+        private readonly Font shopTitleFont = new Font("Segoe UI", 22F, FontStyle.Bold, GraphicsUnit.Pixel);
+        private readonly Font menuTitleFont = new Font("Segoe UI", 44F, FontStyle.Bold, GraphicsUnit.Pixel);
+        private readonly Font menuButtonFont = new Font("Segoe UI", 18F, FontStyle.Bold, GraphicsUnit.Pixel);
+        private readonly Font upgradeNameFont = new Font("Segoe UI", 12F, FontStyle.Bold, GraphicsUnit.Pixel);
+        private readonly Font upgradeDescFont = new Font("Segoe UI", 10.5F, FontStyle.Regular, GraphicsUnit.Pixel);
         private readonly SolidBrush overlayBrush = new SolidBrush(Color.FromArgb(140, 0, 0, 0));
         private readonly StringFormat centerFormat = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         private readonly StringFormat rightFormat = new StringFormat { Alignment = StringAlignment.Far };
@@ -134,6 +140,8 @@ namespace Fishing
 
         // Кнопка повернення в меню на ігровому екрані (створюється в коді, а не в дизайнері)
         private readonly Button btnMenu = new Button();
+        private readonly Button btnNewGame = new Button();
+        private bool lastIsRecord;   // улов побив рекорд ваги цього виду
 
         // Чи утримується зараз хоча б одна кнопка керування (ЛКМ або пробіл)
         private bool AnyInputDown => mouseDown || spaceDown;
@@ -168,23 +176,47 @@ namespace Fishing
             btnShop.Location = new Point(btnJournal.Left, btnExit.Top);
             btnShop.UseVisualStyleBackColor = true;
 
-            // Іконки на кнопках меню і монета біля лічильника
-            SetButtonIcon(btnJournal, "Fishing.Assets.Icons.icon_journal", 30);
-            SetButtonIcon(btnShop, "Fishing.Assets.Icons.icon_shop", 30);
-            pbCoin.Image = LoadEmbeddedImage("Fishing.Assets.Icons.icon_coin");
+            // Піксельна монета біля лічильника (малюється з коду цілим масштабом — без розмиття)
+            int coinScale = Math.Max(2, (int)Math.Round(26 * DpiScale / 12f));
+            pbCoin.Image = MakePixelBitmap(CoinSprite, coinScale);
             coinImage = pbCoin.Image;
-            if (pbCoin.Image != null)
-            {
-                loadedImages.Add(pbCoin.Image);
-                pbCoin.SizeMode = PictureBoxSizeMode.Zoom;
-                pbCoin.Size = new Size(28, 28);
-                pbCoin.Location = new Point(lblScore.Left, lblScore.Top + 2);
-                lblScore.Left += 34;
-                Controls.Add(pbCoin);
-            }
+            loadedImages.Add(pbCoin.Image);
+            pbCoin.SizeMode = PictureBoxSizeMode.CenterImage;
+            pbCoin.BackColor = Color.Transparent;
+            pbCoin.Size = pbCoin.Image.Size;
+            pbCoin.Location = new Point(lblScore.Left, lblScore.Top + (lblScore.Height - pbCoin.Height) / 2);
+            lblScore.Left += pbCoin.Width + (int)(6 * DpiScale);
+            Controls.Add(pbCoin);
             btnShop.Click += (s, e) => { shopMessage = ""; ShowPanel(pnlShop); };
             pnlMenu.Controls.Add(btnShop);
-            btnExit.Top = btnShop.Bottom + (btnJournal.Top - btnPlay.Bottom);
+
+            // Кнопка «Нова гра»: скидає прогрес після підтвердження
+            btnNewGame.Text = "Нова гра";
+            btnNewGame.Click += (s, e) => StartNewGame();
+            pnlMenu.Controls.Add(btnNewGame);
+
+            // Головне меню і верхня панель у піксельному стилі
+            MakePixelButton(btnPlay, IconPlay);
+            MakePixelButton(btnJournal, IconJournal);
+            MakePixelButton(btnShop, IconShop);
+            MakePixelButton(btnNewGame, IconNewgame);
+            MakePixelButton(btnExit, IconExit);
+            EnableDoubleBuffering(pnlMenu);
+            pnlMenu.Paint += PnlMenu_Paint;
+            pnlMenu.SizeChanged += (s, e) => LayoutMenu();
+            LayoutMenu();
+            BackColor = Color.FromArgb(62, 39, 49);
+            lblScore.ForeColor = Color.FromArgb(255, 236, 190);
+            lblScore.BackColor = Color.Transparent;
+            Paint += Form1_Paint;
+            try
+            {
+                Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); // іконка вікна = іконка .exe
+            }
+            catch (ArgumentException)
+            {
+                // без іконки вікно лишається зі стандартною
+            }
 
             // Панель магазину на місці ігрової
             pnlShop.Location = pnlGame.Location;
@@ -210,19 +242,19 @@ namespace Fishing
 
             // Кнопка «Меню» вгорі праворуч, видна лише на ігровому екрані
             btnMenu.Text = "Меню (Esc)";
-            btnMenu.Size = new Size(110, 34);
-            btnMenu.Location = new Point(ClientSize.Width - btnMenu.Width - 12, 8);
+            btnMenu.Size = new Size((int)(150 * DpiScale), (int)(34 * DpiScale));
+            btnMenu.Location = new Point(ClientSize.Width - btnMenu.Width - (int)(10 * DpiScale), (int)(8 * DpiScale));
             btnMenu.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnMenu.TabStop = false;
             btnMenu.Visible = false;
             btnMenu.Click += (s, e) => ReturnToMenu();
-            SetButtonIcon(btnMenu, "Fishing.Assets.Icons.icon_menu", 20);
+            MakePixelButton(btnMenu, IconMenu);
             Controls.Add(btnMenu);
             btnMenu.BringToFront(); // кнопка поверх гри і журналу
             btnExit.Click += (s, e) => Close();
 
-            floatPos = rodTip;
-            floatTarget = rodTip;
+            floatPos = FloatRest;
+            floatTarget = FloatRest;
 
             tmrCast.Tick += TmrCast_Tick;
             tmrBite.Tick += TmrBite_Tick;
@@ -268,6 +300,178 @@ namespace Fishing
             }
         }
 
+        // ---------- Піксельні значки кнопок (картка 27): 12 арт-пікселів завширшки, з темною обвідкою
+        private static readonly string[] IconPlay = new[] { ".....k......", "....kbk.....", "....kbk.....", "...krrrk....", "..krlrrrk...", "..krlrrrk...", "..krrrrrk...", "..kwwwwwk...", "..kwwwbwk...", "...kwbbk....", "....kbk.....", ".....k......" };
+        private static readonly string[] IconJournal = new[] { ".kkkkkkkkkk.", "kntttttttttk", "kntttyyttttk", "knttyyyytytk", "kntykyyyyytk", "knttyyyytytk", "kntttyyttttk", "kntttttttttk", "knwwwwwwwwwk", "knnnnnnnnnnk", ".kkkkkkkkrk.", ".........k.." };
+        private static readonly string[] IconShop = new[] { "....kkkk....", "...kppppk...", "....kddk....", "...kppppk...", "..kppppppk..", ".kpppooppqk.", "kpppoyyopqqk", "kpppoyyoqqqk", "kppppooqqqqk", ".kppppqqqqk.", "..kkkkkkkk.." };
+        private static readonly string[] IconNewgame = new[] { "..kk....kk..", ".kggk..kggk.", ".kgggkkgggk.", "..kggggggk..", "...kkeekk...", "...kkeekk...", "..kddddddk..", "..kdaaaadk..", "...kddddk...", "....kkkk...." };
+        private static readonly string[] IconExit = new[] { ".kkkkkk.....", "kddddddk....", "kdaaaadkk...", "kdaaaadkwk..", "kdaaaakkwwk.", "kdayaawwwwwk", "kdaaaakkwwk.", "kdaaaadkwk..", "kdaaaadkk...", "kddddddk....", ".kkkkkk....." };
+        private static readonly string[] IconMenu = new[] { "..kkkkkkkk..", ".kwwwwwwwwk.", "..kkkkkkkk..", ".kwwwwwwwwk.", "..kkkkkkkk..", ".kwwwwwwwwk.", "..kkkkkkkk.." };
+        private static readonly string[] CoinSprite = new[] { "...kkkkk....", "..kyyyyyk...", ".kyywwyyyk..", "kyywyyyyyok.", "kyywyyyyyok.", "kyyyyyyyyok.", "kyyyyyyyyok.", "kyyyyyyyook.", ".kyyyyyook..", "..kooooook..", "...kkkkk....", "............" };
+
+        private static readonly Dictionary<char, Color> SpriteColors = new Dictionary<char, Color>
+        {
+            { 'k', Color.FromArgb(24, 20, 37) }, { 'w', Color.White }, { 'y', Color.FromArgb(254, 231, 97) },
+            { 'o', Color.FromArgb(247, 180, 40) }, { 'a', Color.FromArgb(184, 111, 80) },
+        };
+
+        private static Bitmap MakePixelBitmap(string[] rows, int scale)
+        {
+            // Спрайт у бітмап цілим масштабом: кожен піксель — квадрат scale×scale, без згладжування
+            var bitmap = new Bitmap(rows[0].Length * scale, rows.Length * scale, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(bitmap))
+            {
+                for (int y = 0; y < rows.Length; y++)
+                {
+                    for (int x = 0; x < rows[y].Length; x++)
+                    {
+                        if (SpriteColors.TryGetValue(rows[y][x], out Color color))
+                        {
+                            using (var brush = new SolidBrush(color))
+                            {
+                                g.FillRectangle(brush, x * scale, y * scale, scale, scale);
+                            }
+                        }
+                    }
+                }
+            }
+            return bitmap;
+        }
+
+        private readonly Dictionary<Button, string[]> pixelButtonIcons = new Dictionary<Button, string[]>();
+        private Button hoveredButton;
+        private Button pressedButton;
+
+        private void MakePixelButton(Button button, string[] icon)
+        {
+            // Дерев'яна піксельна кнопка: малюємо її повністю самі, стандартний вигляд прибираємо
+            pixelButtonIcons[button] = icon;
+            button.FlatStyle = FlatStyle.Flat;
+            button.FlatAppearance.BorderSize = 0;
+            button.FlatAppearance.MouseOverBackColor = Color.Transparent;
+            button.FlatAppearance.MouseDownBackColor = Color.Transparent;
+            button.UseVisualStyleBackColor = false;
+            button.BackColor = Color.Transparent;
+            button.ForeColor = Color.FromArgb(255, 236, 190);
+            button.Image = null;
+            button.Cursor = Cursors.Hand;
+            button.TabStop = false;
+            button.Paint += PixelButton_Paint;
+            button.MouseEnter += (s, e) => { hoveredButton = button; button.Invalidate(); };
+            button.MouseLeave += (s, e) => { if (hoveredButton == button) hoveredButton = null; pressedButton = null; button.Invalidate(); };
+            button.MouseDown += (s, e) => { pressedButton = button; button.Invalidate(); };
+            button.MouseUp += (s, e) => { pressedButton = null; button.Invalidate(); };
+        }
+
+        private void PixelButton_Paint(object sender, PaintEventArgs e)
+        {
+            var button = (Button)sender;
+            Graphics g = e.Graphics;
+            g.ScaleTransform(DpiScale, DpiScale);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+            float aw = (float)Math.Floor(button.ClientSize.Width / DpiScale / Px);
+            float ah = (float)Math.Floor(button.ClientSize.Height / DpiScale / Px);
+            bool hover = hoveredButton == button;
+            float press = pressedButton == button ? 1 : 0;
+
+            // Тінь, а над нею кнопка; натиснута опускається на піксель
+            PixelRect(g, Ink, 1, 2, aw - 1, ah - 2);
+            DrawPixelPanel(g, ArtRect(0, press, aw - 1, ah - 2), hover ? Wood : PlankLight, Ink, hover ? Gold : Wood, PlankShade);
+
+            string[] icon = pixelButtonIcons[button];
+            // Значок у тій самій піксельній сітці, що й решта гри: 1 піксель значка = 1 арт-піксель
+            float iconSize = icon[0].Length;
+            float iconHeight = icon.Length;
+            Font font = button == btnMenu ? shopButtonFont : menuButtonFont;
+            SizeF text = g.MeasureString(button.Text, font);
+            float textArt = text.Width / Px;
+            float content = iconSize + 4 + textArt;
+            float left = (float)Math.Round((aw - 1 - content) / 2);
+            float iconTop = (float)Math.Round(press + (ah - 2 - iconHeight) / 2);
+            PixelSpriteScaled(g, icon, ButtonIconColors, left, iconTop, 1);
+
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.DrawString(button.Text, font, Cream, (left + iconSize + 4) * Px, (press + (ah - 2) / 2) * Px - text.Height / 2);
+        }
+
+        private void LayoutMenu()
+        {
+            // Кнопки меню стовпчиком по центру, під вивіскою; розміри — від розміру панелі
+            float scale = pnlMenu.ClientSize.Width / 800f;
+            if (scale <= 0)
+            {
+                return;
+            }
+            Button[] buttons = { btnPlay, btnJournal, btnShop, btnNewGame, btnExit };
+            int width = (int)(232 * scale), height = (int)(44 * scale), gap = (int)(8 * scale);
+            int top = (int)(122 * scale);
+            for (int i = 0; i < buttons.Length; i++)
+            {
+                buttons[i].Size = new Size(width, height);
+                buttons[i].Location = new Point((pnlMenu.ClientSize.Width - width) / 2, top + i * (height + gap));
+            }
+        }
+
+        private void PnlMenu_Paint(object sender, PaintEventArgs e)
+        {
+            // Фон — поточна локація, зверху дерев'яна вивіска з назвою гри
+            Bitmap background = GetScaledBackground(pnlMenu.ClientSize);
+            if (background != null)
+            {
+                e.Graphics.DrawImageUnscaled(background, 0, 0);
+            }
+            Graphics g = e.Graphics;
+            g.ScaleTransform(DpiScale, DpiScale);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+            float aw = (float)Math.Floor(pnlMenu.ClientSize.Width / DpiScale / Px);
+            float signX = (float)Math.Round(aw / 2 - 70);
+            PixelRect(g, Nail, signX + 14, 0, 1, 8);
+            PixelRect(g, Nail, signX + 125, 0, 1, 8);
+            DrawPixelPanel(g, ArtRect(signX, 8, 140, 44), PlankLight, Ink, Wood, PlankShade);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.DrawString("Fishing", menuTitleFont, Cream, ArtRect(signX, 8, 140, 32), centerFormat);
+            g.DrawString("зимова рибалка", shopTextFont, Cream, ArtRect(signX, 36, 140, 12), centerFormat);
+        }
+
+        private void Form1_Paint(object sender, PaintEventArgs e)
+        {
+            // Верхня панель з монетами — дерев'яна, як і решта інтерфейсу
+            Graphics g = e.Graphics;
+            g.ScaleTransform(DpiScale, DpiScale);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            float width = ClientSize.Width / DpiScale, height = pnlGame.Top / DpiScale;
+            DrawPlankWall(g, width, height);
+            PixelRect(g, Ink, 0, (float)Math.Floor(height / Px) - 1, (float)Math.Ceiling(width / Px), 1);
+        }
+
+        private void StartNewGame()
+        {
+            DialogResult answer = MessageBox.Show("Почати нову гру? Монети, покупки й журнал буде скинуто.", "Нова гра",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            if (answer != DialogResult.Yes)
+            {
+                return;
+            }
+            SaveService.DeleteSave();
+            player.Money = 0;
+            player.Score = 0;
+            player.UpgradeLevels.Clear();
+            player.DiscoveredFishIds.Clear();
+            player.UnlockedLocationIds.Clear();
+            foreach (Location location in Catalog.Locations.Where(l => l.Price == 0))
+            {
+                player.UnlockedLocationIds.Add(location.Id); // безкоштовні локації відкриті завжди
+            }
+            player.CurrentLocationId = Catalog.Locations.First(l => l.Price == 0).Id;
+            catchCounts.Clear();
+            bestWeights.Clear();
+            ResetGameState();
+            UpdateCoinsLabel();
+            pnlMenu.Invalidate();
+        }
+
         private void DisposeGameResources()
         {
             tmrCast.Dispose();
@@ -285,6 +489,11 @@ namespace Fishing
             shopNameFont.Dispose();
             shopTextFont.Dispose();
             shopButtonFont.Dispose();
+            shopTitleFont.Dispose();
+            menuTitleFont.Dispose();
+            menuButtonFont.Dispose();
+            upgradeNameFont.Dispose();
+            upgradeDescFont.Dispose();
             overlayBrush.Dispose();
             centerFormat.Dispose();
             rightFormat.Dispose();
@@ -368,67 +577,6 @@ namespace Fishing
             }
         }
 
-        private void SetButtonIcon(Button button, string resourcePrefix, int logicalSize)
-        {
-            Image icon = LoadEmbeddedImage(resourcePrefix);
-            if (icon == null)
-            {
-                return;
-            }
-            int size = (int)Math.Round(logicalSize * DeviceDpi / 96f);
-            var scaled = new Bitmap(icon, new Size(size, size));
-            icon.Dispose();
-            loadedImages.Add(scaled);
-
-            // Стандартна кнопка WinForms не вміє центрувати пару «іконка + текст»
-            // (при різному масштабі екрана іконка налазила на текст), тому іконку малюємо самі
-            buttonIcons[button] = scaled;
-            button.Image = null;
-            button.TextAlign = ContentAlignment.MiddleCenter;
-            LayoutIconButton(button);
-            button.SizeChanged += (s, e) => LayoutIconButton(button); // після масштабування під DPI
-            button.Paint += IconButton_Paint;
-        }
-
-        private int IconGap => (int)Math.Round(6 * DeviceDpi / 96f);
-
-        private void LayoutIconButton(Button button)
-        {
-            Image icon = buttonIcons[button];
-            Size text = TextRenderer.MeasureText(button.Text, button.Font);
-            int content = icon.Width + IconGap + text.Width;
-
-            // Якщо іконка з текстом не влазять, розширюємо кнопку, інакше текст переноситься і обрізається
-            int margin = (int)Math.Round(10 * DeviceDpi / 96f);
-            int needed = content + 2 * margin + (button.Width - button.ClientSize.Width);
-            if (button.Width < needed)
-            {
-                bool anchoredRight = (button.Anchor & AnchorStyles.Right) != 0 && (button.Anchor & AnchorStyles.Left) == 0;
-                if (anchoredRight)
-                {
-                    button.Left -= needed - button.Width; // права межа лишається на місці
-                }
-                button.Width = needed; // SizeChanged викличе цей метод ще раз уже з новою шириною
-                return;
-            }
-
-            // Ліворуч резервуємо місце під іконку: текст центрується в решті кнопки,
-            // і тоді пара «іконка + текст» опиняється рівно по центру
-            button.Padding = new Padding(icon.Width + IconGap, 0, 0, 0);
-            button.Invalidate();
-        }
-
-        private void IconButton_Paint(object sender, PaintEventArgs e)
-        {
-            var button = (Button)sender;
-            Image icon = buttonIcons[button];
-            Size text = TextRenderer.MeasureText(button.Text, button.Font);
-            int content = icon.Width + IconGap + text.Width;
-            int x = (button.ClientSize.Width - content) / 2;
-            int y = (button.ClientSize.Height - icon.Height) / 2;
-            e.Graphics.DrawImage(icon, x, y, icon.Width, icon.Height);
-        }
-
         private Bitmap GetScaledBackground(Size size)
         {
             // Масштабуємо фон під розмір панелі лише один раз для кожної локації
@@ -444,7 +592,9 @@ namespace Fishing
             backgroundCache = new Bitmap(size.Width, size.Height, PixelFormat.Format32bppPArgb);
             using (Graphics g = Graphics.FromImage(backgroundCache))
             {
-                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                // Фони — піксель-арт 400x200: збільшуємо без згладжування, щоб пікселі лишались чіткими
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
                 g.DrawImage(source, new Rectangle(0, 0, size.Width, size.Height));
             }
             backgroundCacheLocationId = player.CurrentLocationId;
@@ -550,8 +700,8 @@ namespace Fishing
             mouseDown = false;
             spaceDown = false;
             statusText = "";
-            floatPos = rodTip;
-            floatTarget = rodTip;
+            floatPos = FloatRest;
+            floatTarget = FloatRest;
             pnlGame.Invalidate();
         }
 
@@ -709,7 +859,7 @@ namespace Fishing
             if (isReeling)
             {
                 isReeling = false;
-                floatPos = rodTip;
+                floatPos = FloatRest;
             }
 
             isCharging = true;
@@ -742,7 +892,8 @@ namespace Fishing
             // Чим сильніше заряд, тим далі летить поплавець
             float distance = CastDistanceFor(power);
             lastCastDistance = distance;
-            floatPos = rodTip;
+            floatPos = FloatRest;
+            castFrom = floatPos;
             floatTarget = new PointF(Math.Min(rodTip.X + distance, LogicalWidth - 16), LogicalHeight - 100);
             isFlying = true;
             castClock.Restart();
@@ -819,7 +970,7 @@ namespace Fishing
         {
             // Після вилову чи втечі риби змотуємо волосінь: поплавець повертається до кінчика вудки
             isReeling = true;
-            floatTarget = rodTip;
+            floatTarget = FloatRest;
             castClock.Restart();
             tmrCast.Start();
         }
@@ -940,13 +1091,13 @@ namespace Fishing
             else if (isReeling)
             {
                 // Змотування: поплавець пливе назад до вудки трохи швидше, ніж летів
-                float dx = rodTip.X - floatPos.X;
-                float dy = rodTip.Y - floatPos.Y;
+                float dx = FloatRest.X - floatPos.X;
+                float dy = FloatRest.Y - floatPos.Y;
                 float length = (float)Math.Sqrt(dx * dx + dy * dy);
                 float step = 12 * k;
                 if (length <= step)
                 {
-                    floatPos = rodTip;
+                    floatPos = FloatRest;
                     isReeling = false;
                     tmrCast.Stop();
                 }
@@ -977,28 +1128,22 @@ namespace Fishing
             e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
 
-            // Буйки дальності і точка падіння під час заряду
+            // Піксельні елементи сцени — без згладжування, по сітці арт-пікселів
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+
+            // Маркер падіння під час заряду
             DrawDepthMarkers(e.Graphics);
 
-            // Місток, вудка і волосінь
-            DrawPierAndRod(e.Graphics);
-            e.Graphics.DrawLine(linePen, rodTip, floatPos);
-
-            // Поплавець
-            e.Graphics.FillEllipse(Brushes.Red, floatPos.X - 6, floatPos.Y - 6, 12, 12);
-            e.Graphics.FillEllipse(Brushes.White, floatPos.X - 3, floatPos.Y - 3, 6, 6);
-
-            // Знак поклювання над поплавцем
-            if (isBiting)
-            {
-                e.Graphics.DrawString("!", alertFont, Brushes.Red, floatPos.X - 8, floatPos.Y - 55);
-            }
+            // Вудка, волосінь і поплавець
+            PointF shownFloat = ShownFloatPosition();
+            DrawRod(e.Graphics);
+            DrawFishingLine(e.Graphics, shownFloat);
+            DrawFloat(e.Graphics, shownFloat);
 
             // Шкала сили закидання
             if (isCharging)
             {
-                e.Graphics.DrawRectangle(Pens.Black, 20, LogicalHeight - 40, 200, 16);
-                e.Graphics.FillRectangle(Brushes.OrangeRed, 21, LogicalHeight - 39, castPower * 2 - 1 < 0 ? 0 : castPower * 2 - 1, 14);
+                DrawPowerBar(e.Graphics);
             }
 
             // Міні-гра: смуга з зеленою зоною, рибою і шкала прогресу поруч
@@ -1007,15 +1152,33 @@ namespace Fishing
                 DrawFightBar(e.Graphics);
             }
 
-            // Повідомлення про результат
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+
+            // Повідомлення про результат — на темній підкладці, щоб читалось на будь-якому фоні
             if (!string.IsNullOrEmpty(statusText))
             {
-                e.Graphics.DrawString(statusText, statusFont, Brushes.Black, 20, 20);
+                DrawTextPanel(e.Graphics, statusText, statusFont, new PointF(16, 14), false);
+            }
+
+            // Підказки для новачка — поки не спіймано жодної риби
+            if (player.DiscoveredFishIds.Count == 0 && !isShowingResult)
+            {
+                string hint = isFighting ? "Тримай кнопку — зелена зона йде вгору. Тримай рибу в ній"
+                    : isBiting ? "Клює! Швидко клікни або натисни пробіл"
+                    : FloatOnWater ? "Чекай, поки клюне…"
+                    : isCharging ? "Відпусти — поплавець полетить. Довше тримаєш — далі летить"
+                    : isFlying || isReeling ? null
+                    : "Затисни ЛКМ або пробіл, щоб зарядити закид";
+                if (hint != null)
+                {
+                    SizeF size = e.Graphics.MeasureString(hint, shopButtonFont);
+                    DrawTextPanel(e.Graphics, hint, shopButtonFont, new PointF((LogicalWidth - size.Width - 16) / 2, 52), false);
+                }
             }
 
             // Назва поточної локації у правому верхньому куті поля
-            e.Graphics.DrawString(Catalog.GetLocation(player.CurrentLocationId).Name, shopNameFont, Brushes.DarkSlateGray,
-                new RectangleF(LogicalWidth - 200, 8, 190, 24), rightFormat);
+            DrawTextPanel(e.Graphics, Catalog.GetLocation(player.CurrentLocationId).Name, shopNameFont,
+                new PointF(LogicalWidth - 16, 14), true);
 
             // Екран результату поверх гри
             if (isShowingResult && lastCatch != null)
@@ -1078,70 +1241,252 @@ namespace Fishing
             return 150 + power * 4 + (float)UpgradeValue(UpgradeType.CastRange);
         }
 
-        private void DrawPierAndRod(Graphics g)
+        // ---------- Піксель-арт сцени (картка 27): 1 арт-піксель = 2 логічні пікселі, як у фонах 400x200
+        private const float Px = 2f;
+
+        private static readonly SolidBrush RodDark = new SolidBrush(Color.FromArgb(79, 49, 37));
+        private static readonly SolidBrush RodLight = new SolidBrush(Color.FromArgb(168, 112, 63));
+        private static readonly SolidBrush Cork = new SolidBrush(Color.FromArgb(226, 200, 160));
+        private static readonly SolidBrush MetalDark = new SolidBrush(Color.FromArgb(84, 91, 107));
+        private static readonly SolidBrush MetalLight = new SolidBrush(Color.FromArgb(167, 176, 189));
+        private static readonly SolidBrush LineBrush = new SolidBrush(Color.FromArgb(190, 228, 234, 242));
+        private static readonly SolidBrush RippleBrush = new SolidBrush(Color.FromArgb(170, 225, 238, 248));
+        private static readonly SolidBrush FloatRed = new SolidBrush(Color.FromArgb(228, 59, 68));
+        private static readonly SolidBrush FloatRedLight = new SolidBrush(Color.FromArgb(246, 117, 122));
+        private static readonly SolidBrush FloatWhite = new SolidBrush(Color.White);
+        private static readonly SolidBrush Ink = new SolidBrush(Color.FromArgb(24, 20, 37));
+        private static readonly SolidBrush PanelFill = new SolidBrush(Color.FromArgb(205, 24, 20, 37));
+        private static readonly SolidBrush PanelEdge = new SolidBrush(Color.FromArgb(139, 155, 180));
+        private static readonly SolidBrush Parchment = new SolidBrush(Color.FromArgb(234, 212, 170));
+        private static readonly SolidBrush ParchmentDark = new SolidBrush(Color.FromArgb(228, 166, 114));
+        private static readonly SolidBrush Wood = new SolidBrush(Color.FromArgb(184, 111, 80));
+        private static readonly SolidBrush WoodDark = new SolidBrush(Color.FromArgb(115, 62, 57));
+        private static readonly SolidBrush Track = new SolidBrush(Color.FromArgb(18, 78, 137));
+        private static readonly SolidBrush TrackDark = new SolidBrush(Color.FromArgb(38, 43, 68));
+        private static readonly SolidBrush Zone = new SolidBrush(Color.FromArgb(99, 199, 77));
+        private static readonly SolidBrush ZoneLight = new SolidBrush(Color.FromArgb(190, 240, 150));
+        private static readonly SolidBrush ZoneDark = new SolidBrush(Color.FromArgb(62, 137, 72));
+        private static readonly SolidBrush Marker = new SolidBrush(Color.FromArgb(247, 118, 34));
+        private static readonly SolidBrush Gold = new SolidBrush(Color.FromArgb(254, 231, 97));
+        private static readonly SolidBrush GoldDark = new SolidBrush(Color.FromArgb(254, 174, 52));
+
+        private static void PixelRect(Graphics g, Brush brush, float ax, float ay, float aw = 1, float ah = 1)
         {
-            float height = LogicalHeight;
-            float deckY = height - 138;
-
-            // Дерев'яний місток: дві палі у воді і настил з дощок
-            using (var post = new SolidBrush(Color.FromArgb(105, 70, 40)))
-            using (var deck = new SolidBrush(Color.FromArgb(160, 110, 60)))
-            using (var plankPen = new Pen(Color.FromArgb(120, 80, 45), 1))
-            {
-                g.FillRectangle(post, 8, deckY + 8, 7, height - deckY);
-                g.FillRectangle(post, 50, deckY + 8, 7, height - deckY);
-                g.FillRectangle(deck, 0, deckY, 70, 11);
-                for (int x = 14; x < 70; x += 14)
-                {
-                    g.DrawLine(plankPen, x, deckY, x, deckY + 11);
-                }
-                g.DrawRectangle(plankPen, 0, deckY, 70, 11);
-            }
-
-            // Вудлище: від ручки на містку до кінчика, тоншає до кінця
-            var handle = new PointF(30, deckY - 4);
-            float dx = rodTip.X - handle.X, dy = rodTip.Y - handle.Y;
-            float length = (float)Math.Sqrt(dx * dx + dy * dy);
-            float nx = -dy / length, ny = dx / length; // перпендикуляр до вудлища
-            var rod = new[]
-            {
-                new PointF(handle.X + nx * 3f, handle.Y + ny * 3f),
-                new PointF(rodTip.X + nx * 0.8f, rodTip.Y + ny * 0.8f),
-                new PointF(rodTip.X - nx * 0.8f, rodTip.Y - ny * 0.8f),
-                new PointF(handle.X - nx * 3f, handle.Y - ny * 3f),
-            };
-            using (var rodBrush = new SolidBrush(Color.FromArgb(120, 75, 35)))
-            {
-                g.FillPolygon(rodBrush, rod);
-            }
-
-            // Коркова ручка і котушка
-            float ux = dx / length, uy = dy / length;
-            using (var cork = new Pen(Color.FromArgb(205, 165, 110), 6.5f))
-            {
-                g.DrawLine(cork, handle, new PointF(handle.X + ux * 22, handle.Y + uy * 22));
-            }
-            var reel = new PointF(handle.X + ux * 30 + nx * 6, handle.Y + uy * 30 + ny * 6);
-            g.FillEllipse(Brushes.DimGray, reel.X - 5, reel.Y - 5, 10, 10);
-            g.FillEllipse(Brushes.Silver, reel.X - 2, reel.Y - 2, 4, 4);
+            g.FillRectangle(brush, ax * Px, ay * Px, aw * Px, ah * Px);
         }
+
+        private static void PixelLine(Graphics g, Brush brush, float x0, float y0, float x1, float y1)
+        {
+            // Лінія по сітці арт-пікселів: крок по довшій осі
+            int steps = (int)Math.Max(Math.Abs(x1 - x0), Math.Abs(y1 - y0));
+            for (int i = 0; i <= steps; i++)
+            {
+                float t = steps == 0 ? 0 : (float)i / steps;
+                PixelRect(g, brush, (float)Math.Round(x0 + (x1 - x0) * t), (float)Math.Round(y0 + (y1 - y0) * t));
+            }
+        }
+
+        private static void PixelSprite(Graphics g, string[] rows, Dictionary<char, Brush> colors, float ax, float ay)
+        {
+            for (int y = 0; y < rows.Length; y++)
+            {
+                for (int x = 0; x < rows[y].Length; x++)
+                {
+                    if (colors.TryGetValue(rows[y][x], out Brush brush))
+                    {
+                        PixelRect(g, brush, ax + x, ay + y);
+                    }
+                }
+            }
+        }
+
+        private static void DrawPixelPanel(Graphics g, RectangleF rect, Brush fill, Brush edge, Brush light, Brush shade)
+        {
+            // Панель з рамкою в 1 арт-піксель: обвідка, світлий верх-ліво, тінь знизу-праворуч
+            float ax = (float)Math.Floor(rect.X / Px), ay = (float)Math.Floor(rect.Y / Px);
+            float aw = (float)Math.Ceiling(rect.Width / Px), ah = (float)Math.Ceiling(rect.Height / Px);
+            PixelRect(g, edge, ax + 1, ay, aw - 2, 1);
+            PixelRect(g, edge, ax + 1, ay + ah - 1, aw - 2, 1);
+            PixelRect(g, edge, ax, ay + 1, 1, ah - 2);
+            PixelRect(g, edge, ax + aw - 1, ay + 1, 1, ah - 2);
+            PixelRect(g, fill, ax + 1, ay + 1, aw - 2, ah - 2);
+            if (light != null)
+            {
+                PixelRect(g, light, ax + 1, ay + 1, aw - 2, 1);
+                PixelRect(g, light, ax + 1, ay + 2, 1, ah - 4);
+            }
+            if (shade != null)
+            {
+                PixelRect(g, shade, ax + 1, ay + ah - 2, aw - 2, 1);
+                PixelRect(g, shade, ax + aw - 2, ay + 2, 1, ah - 4);
+            }
+        }
+
+        private void DrawTextPanel(Graphics g, string text, Font font, PointF anchor, bool alignRight)
+        {
+            // Текст на темній піксельній підкладці: читається і вдень, і вночі
+            SizeF size = g.MeasureString(text, font);
+            float width = (float)Math.Ceiling((size.Width + 16) / Px) * Px;
+            float height = (float)Math.Ceiling((size.Height + 6) / Px) * Px;
+            float x = alignRight ? anchor.X - width : anchor.X;
+            var rect = new RectangleF((float)Math.Round(x / Px) * Px, anchor.Y, width, height);
+            var previous = g.SmoothingMode;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            DrawPixelPanel(g, rect, PanelFill, PanelEdge, null, null);
+            g.SmoothingMode = previous;
+            g.DrawString(text, font, Brushes.White, rect.X + 8, rect.Y + 3);
+        }
+
+        private void DrawRod(Graphics g)
+        {
+            // Вудлище з двох тонів, коркова ручка, котушка і підставка на помості
+            float tipX = rodTip.X / Px, tipY = rodTip.Y / Px;
+            PixelRect(g, MetalDark, 13, 168, 6, 2);                 // підставка
+            PixelLine(g, RodDark, 15, 169, tipX - 1, tipY);
+            PixelLine(g, RodLight, 16, 169, tipX, tipY);
+            PixelRect(g, Cork, 13, 160, 2, 7);                      // корок
+            PixelRect(g, RodDark, 15, 160, 1, 7);
+            PixelRect(g, MetalDark, 17, 161, 3, 3);                 // котушка
+            PixelRect(g, MetalLight, 17, 161, 1, 1);
+            PixelRect(g, MetalLight, tipX, tipY - 1, 1, 1);          // кільце на кінчику
+        }
+
+        private bool FloatOnWater => !isFlying && !isReeling && (tmrBite.Enabled || isBiting || isFighting);
+
+        private PointF ShownFloatPosition()
+        {
+            // Під час польоту поплавець летить дугою, а не по прямій
+            if (!isFlying)
+            {
+                return floatPos;
+            }
+            float total = Distance(castFrom, floatTarget);
+            float t = total > 0 ? Math.Min(1f, Distance(castFrom, floatPos) / total) : 1f;
+            float height = Math.Min(90f, total * 0.3f);
+            return new PointF(floatPos.X, floatPos.Y - (float)Math.Sin(Math.PI * t) * height);
+        }
+
+        private static float Distance(PointF a, PointF b)
+        {
+            float dx = b.X - a.X, dy = b.Y - a.Y;
+            return (float)Math.Sqrt(dx * dx + dy * dy);
+        }
+
+        private void DrawFishingLine(Graphics g, PointF shownFloat)
+        {
+            // Волосінь: провисає, поки поплавець лежить на воді, натягнута під час виважування
+            float x0 = rodTip.X / Px, y0 = rodTip.Y / Px;
+            float x1 = (float)Math.Round(shownFloat.X / Px), y1 = (float)Math.Round(shownFloat.Y / Px) - 3;
+            float sag = FloatOnWater && !isFighting ? 8f : 0f;
+            int steps = (int)Math.Max(Math.Abs(x1 - x0), Math.Abs(y1 - y0)) + 1;
+            float lastX = float.NaN, lastY = float.NaN;
+            for (int i = 0; i <= steps; i++)
+            {
+                float t = (float)i / steps;
+                float x = (float)Math.Round(x0 + (x1 - x0) * t);
+                float y = (float)Math.Round(y0 + (y1 - y0) * t + sag * 4 * t * (1 - t));
+                if (x != lastX || y != lastY)
+                {
+                    PixelRect(g, LineBrush, x, y);
+                    lastX = x; lastY = y;
+                }
+            }
+        }
+
+        private static readonly Dictionary<char, Brush> FloatColors = new Dictionary<char, Brush>
+        {
+            { 'k', Ink }, { 'r', FloatRed }, { 'h', FloatRedLight }, { 'w', FloatWhite },
+        };
+
+        private void DrawFloat(Graphics g, PointF shownFloat)
+        {
+            float ax = (float)Math.Round(shownFloat.X / Px), ay = (float)Math.Round(shownFloat.Y / Px);
+            if (isFighting)
+            {
+                // Поплавець під водою: видно лише брижі там, де волосінь входить у воду
+                PixelRect(g, RippleBrush, ax - 3, ay, 2, 1);
+                PixelRect(g, RippleBrush, ax + 2, ay, 2, 1);
+                PixelRect(g, RippleBrush, ax - 1, ay + 1, 3, 1);
+                return;
+            }
+            if (FloatOnWater)
+            {
+                // Нижня половина під водою, навколо кола; під час поклювання поплавець пірнає глибше
+                string[] sprite = isBiting
+                    ? new[] { ".k.", "hrr" }
+                    : new[] { ".k.", "hrr", "rrr" };
+                PixelSprite(g, sprite, FloatColors, ax - 1, ay - sprite.Length + 1);
+                int ring = isBiting ? 6 : 4;
+                PixelRect(g, RippleBrush, ax - ring, ay + 1, 2, 1);
+                PixelRect(g, RippleBrush, ax + ring - 1, ay + 1, 2, 1);
+                if (isBiting)
+                {
+                    PixelRect(g, RippleBrush, ax - 3, ay + 2, 7, 1);
+                    DrawBiteAlert(g, ax, ay - 19);
+                }
+                return;
+            }
+            // У повітрі: увесь поплавець, червоний верх і білий низ
+            PixelSprite(g, new[] { ".k.", "hrr", "rrr", "www", "www", ".w." }, FloatColors, ax - 1, ay - 3);
+        }
+
+        private static readonly Dictionary<char, Brush> AlertColors = new Dictionary<char, Brush>
+        {
+            { 'k', Ink }, { 'w', FloatWhite }, { 'r', FloatRed },
+        };
+
+        private static void DrawBiteAlert(Graphics g, float ax, float ay)
+        {
+            // Бульбашка зі знаком оклику над поплавцем
+            PixelSprite(g, new[]
+            {
+                ".kkkkkkkk.",
+                "kwwwwwwwwk",
+                "kwwwrrwwwk",
+                "kwwwrrwwwk",
+                "kwwwrrwwwk",
+                "kwwwrrwwwk",
+                "kwwwrrwwwk",
+                "kwwwwwwwwk",
+                "kwwwrrwwwk",
+                "kwwwwwwwwk",
+                ".kkkkkkkk.",
+                "....kwk...",
+                ".....k....",
+            }, AlertColors, ax - 4, ay);
+        }
+
+        private void DrawPowerBar(Graphics g)
+        {
+            // Шкала сили закидання над помостом: зелена → жовта → червона
+            const float left = 26, top = 160, width = 52;
+            DrawPixelPanel(g, new RectangleF(left * Px, top * Px, (width + 4) * Px, 6 * Px), TrackDark, Ink, null, null);
+            float fill = (float)Math.Round(castPower / 100f * width);
+            Brush color = castPower < 40 ? Zone : castPower < 75 ? (Brush)ParchmentDark : FloatRed;
+            if (fill > 0)
+            {
+                PixelRect(g, color, left + 2, top + 2, fill, 2);
+                PixelRect(g, FloatWhite, left + 2, top + 2, fill, 1);
+                PixelRect(g, color, left + 2, top + 2, Math.Max(0, fill - 1), 1);
+            }
+        }
+
+        private static readonly Dictionary<char, Brush> MarkerColors = new Dictionary<char, Brush>
+        {
+            { 'k', Ink }, { 'o', Marker },
+        };
 
         private void DrawDepthMarkers(Graphics g)
         {
-            // Кольорові буйки дальності прибрано: лишився тільки маркер падіння під час заряду
-            float waterY = LogicalHeight - 100;
-
-            // Під час заряду: куди впаде поплавець
-            if (isCharging)
+            // Під час заряду: піксельна стрілка над місцем, куди впаде поплавець
+            if (!isCharging)
             {
-                float landX = rodTip.X + CastDistanceFor(castPower);
-                g.FillPolygon(Brushes.OrangeRed, new[]
-                {
-                    new PointF(landX, waterY + 8),
-                    new PointF(landX - 7, waterY + 20),
-                    new PointF(landX + 7, waterY + 20),
-                });
+                return;
             }
+            float landX = Math.Min(rodTip.X + CastDistanceFor(castPower), LogicalWidth - 16);
+            float ax = (float)Math.Round(landX / Px), ay = (LogicalHeight - 100) / Px - 9;
+            PixelSprite(g, new[] { "kkkkkkk", "koooook", ".koook.", "..kok..", "...k..." },
+                MarkerColors, ax - 3, ay);
         }
 
         private static string FormatWeight(double kg)
@@ -1159,9 +1504,11 @@ namespace Fishing
             double weight = CatchService.RollWeight(fish, rng);
             lastCatch = CatchService.ProcessCatch(player, fish, weight, UpgradeValue(UpgradeType.SellBonus));
 
-            // Статистика для карток журналу (кількість і рекорд) — лише для відображення
+            // Статистика для карток журналу (кількість і рекорд); рекорд рахується, якщо вид уже ловили
             catchCounts[fish.Id] = (catchCounts.TryGetValue(fish.Id, out int count) ? count : 0) + 1;
-            if (!bestWeights.TryGetValue(fish.Id, out double best) || weight > best)
+            bool hadBest = bestWeights.TryGetValue(fish.Id, out double best);
+            lastIsRecord = hadBest && weight > best;
+            if (!hadBest || weight > best)
             {
                 bestWeights[fish.Id] = weight;
             }
@@ -1217,8 +1564,10 @@ namespace Fishing
             const float cardHeight = 250;
             float cardLeft = (width - cardWidth) / 2;
             float cardTop = (height - cardHeight) / 2;
-            g.FillRectangle(Brushes.White, cardLeft, cardTop, cardWidth, cardHeight);
-            g.DrawRectangle(Pens.Black, cardLeft, cardTop, cardWidth, cardHeight);
+            var previousSmoothing = g.SmoothingMode;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            DrawPixelPanel(g, new RectangleF(cardLeft, cardTop, cardWidth, cardHeight), Parchment, WoodDark, FloatWhite, ParchmentDark);
+            g.SmoothingMode = previousSmoothing;
 
             Color rarityColor = RarityColor(lastCatch.Fish.Rarity);
 
@@ -1248,9 +1597,22 @@ namespace Fishing
             if (lastCatch.IsNewSpecies)
             {
                 var badge = new RectangleF(cardLeft + cardWidth - 128, cardTop - 14, 140, 30);
-                g.FillRectangle(Brushes.Gold, badge);
-                g.DrawRectangle(Pens.DarkGoldenrod, badge.X, badge.Y, badge.Width, badge.Height);
+                var previousBadge = g.SmoothingMode;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+                DrawPixelPanel(g, badge, Gold, WoodDark, FloatWhite, GoldDark);
+                g.SmoothingMode = previousBadge;
                 g.DrawString("Новий вид!", statusFont, Brushes.Black, badge, centerFormat);
+            }
+
+            // Позначка рекорду в лівому верхньому куті картки
+            if (lastIsRecord)
+            {
+                var recordBadge = new RectangleF(cardLeft - 12, cardTop - 14, 150, 30);
+                var previousRecord = g.SmoothingMode;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+                DrawPixelPanel(g, recordBadge, Zone, WoodDark, ZoneLight, ZoneDark);
+                g.SmoothingMode = previousRecord;
+                g.DrawString("Новий рекорд!", statusFont, Brushes.White, recordBadge, centerFormat);
             }
 
             // Підказка
@@ -1291,113 +1653,117 @@ namespace Fishing
             }
         }
 
+        private static readonly SolidBrush ParchmentShade = new SolidBrush(Color.FromArgb(206, 190, 160));
+        private static readonly SolidBrush StatLine = new SolidBrush(Color.FromArgb(190, 160, 120));
+
         private void PnlJournal_Paint(object sender, PaintEventArgs e)
         {
+            // Журнал (статистика улову) у тому ж стилі, що й крамниця: стіна з дощок, вивіска, картки-пергаменти
             Graphics g = e.Graphics;
             g.ScaleTransform(DpiScale, DpiScale);
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
 
             float width = pnlJournal.ClientSize.Width / DpiScale;
+            float height = pnlJournal.ClientSize.Height / DpiScale;
+            float aw = (float)Math.Floor(width / Px);
+            DrawPlankWall(g, width, height);
 
-            // Заголовок і лічильник відкритих видів з усього каталогу
-            g.DrawString("Журнал риб", resultTitleFont, Brushes.Black,
-                new RectangleF(0, 6, width, 34), centerFormat);
-            g.DrawString(JournalService.GetProgressText(player), resultTextFont, Brushes.DimGray,
-                new RectangleF(0, 36, width, 24), centerFormat);
+            // Вивіска і лічильник відкритих видів з усього каталогу
+            float signX = (float)Math.Round(aw / 2 - 55);
+            PixelRect(g, Nail, signX + 10, 0, 1, 3);
+            PixelRect(g, Nail, signX + 99, 0, 1, 3);
+            DrawPixelPanel(g, ArtRect(signX, 3, 110, 16), PlankLight, Ink, Wood, PlankShade);
+            g.DrawString("Журнал риб", shopTitleFont, Cream, ArtRect(signX, 3, 110, 16), centerFormat);
+            g.DrawString(JournalService.GetProgressText(player), shopTextFont, Cream, new RectangleF(0, 20 * Px, width, 18), centerFormat);
 
-            // Вкладки локацій
+            // Вкладки локацій — дерев'яні таблички, обрана — пергамент
             journalTabs.Clear();
-            const float tabWidth = 170, tabHeight = 32, tabGap = 10, tabTop = 66;
-            float tabsLeft = (width - (Catalog.Locations.Count * tabWidth + (Catalog.Locations.Count - 1) * tabGap)) / 2;
-            for (int i = 0; i < Catalog.Locations.Count; i++)
+            const float tabW = 82, tabH = 15, tabGap = 6, tabTop = 31;
+            int count = Catalog.Locations.Count;
+            float tabsLeft = (float)Math.Round((aw - (count * tabW + (count - 1) * tabGap)) / 2);
+            for (int i = 0; i < count; i++)
             {
                 Location location = Catalog.Locations[i];
-                var rect = new RectangleF(tabsLeft + i * (tabWidth + tabGap), tabTop, tabWidth, tabHeight);
+                RectangleF rect = ArtRect(tabsLeft + i * (tabW + tabGap), tabTop, tabW, tabH);
                 bool active = location.Id == journalLocationId;
                 bool unlocked = ShopService.IsLocationUnlocked(player, location);
                 int found = JournalService.GetEntries(player, location.Id).Count(entry => entry.IsDiscovered);
 
-                using (var tabBrush = new SolidBrush(active ? LocationColor(location.Id) : Color.FromArgb(225, 225, 225)))
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+                if (active)
                 {
-                    g.FillRectangle(tabBrush, rect);
+                    DrawPixelPanel(g, rect, Parchment, Ink, FloatWhite, ParchmentDark);
                 }
-                g.DrawRectangle(Pens.DarkGray, rect.X, rect.Y, rect.Width, rect.Height);
-                string caption = unlocked ? $"{location.Name}  {found}/{location.Fishes.Count}" : $"{location.Name}  (закрито)";
-                g.DrawString(caption, shopButtonFont, active ? Brushes.White : Brushes.DimGray, rect, centerFormat);
+                else
+                {
+                    DrawPixelPanel(g, rect, PlankLight, Ink, Wood, PlankShade);
+                }
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                string caption = unlocked ? $"{location.Name}  {found}/{location.Fishes.Count}" : $"{location.Name} (закрито)";
+                g.DrawString(caption, shopButtonFont, active ? (Brush)CardText : Cream, rect, centerFormat);
                 journalTabs.Add((rect, location.Id));
             }
 
             // 5 карток видів обраної локації
             Location shown = Catalog.GetLocation(journalLocationId);
             List<JournalEntry> entries = JournalService.GetEntries(player, shown.Id);
-            const float cardWidth = 140, cardHeight = 196, gap = 12, cardsTop = 112;
-            float cardsLeft = (width - (entries.Count * cardWidth + (entries.Count - 1) * gap)) / 2;
+            const float cardW = 70, cardH = 110, gap = 6, cardsTop = 52;
+            float cardsLeft = (float)Math.Round((aw - (entries.Count * cardW + (entries.Count - 1) * gap)) / 2);
             for (int i = 0; i < entries.Count; i++)
             {
-                DrawJournalCard(g, entries[i], new RectangleF(cardsLeft + i * (cardWidth + gap), cardsTop, cardWidth, cardHeight));
+                DrawJournalCard(g, entries[i], cardsLeft + i * (cardW + gap), cardsTop, cardW, cardH);
             }
 
             // Підказка для закритої локації
             if (!ShopService.IsLocationUnlocked(player, shown))
             {
                 g.DrawString($"Локацію «{shown.Name}» можна відкрити в магазині за {shown.Price} {CoinsWord(shown.Price)}",
-                    resultHintFont, Brushes.DimGray, new RectangleF(0, cardsTop + cardHeight + 10, width, 22), centerFormat);
+                    resultHintFont, Cream, new RectangleF(0, (cardsTop + cardH + 4) * Px, width, 22), centerFormat);
             }
         }
 
-        private void DrawJournalCard(Graphics g, JournalEntry entry, RectangleF card)
+        private void DrawJournalCard(Graphics g, JournalEntry entry, float ax, float ay, float aw, float ah)
         {
             Fish fish = entry.Fish;
             bool discovered = entry.IsDiscovered;
 
-            using (var cardBrush = new SolidBrush(discovered ? Color.White : Color.FromArgb(232, 235, 240)))
-            using (var path = RoundedRect(card, 10))
-            {
-                g.FillPath(cardBrush, path);
-                g.DrawPath(Pens.Gainsboro, path);
-            }
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            DrawPixelPanel(g, ArtRect(ax, ay, aw, ah), discovered ? Parchment : ParchmentShade, WoodDark, FloatWhite, discovered ? ParchmentDark : StatLine);
 
-            float centerX = card.X + card.Width / 2;
-            float fishY = card.Y + 44;
+            // Спрайт 64x32 малюємо рівно 1:1 до арт-пікселів фону (128 логічних пікселів)
+            float centerX = (ax + aw / 2) * Px;
+            float fishY = (ay + 20) * Px;
+            DrawFish(g, fish, centerX, fishY, 128, discovered);
+            PixelRect(g, StatLine, ax + 4, ay + 38, aw - 8, 1);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
             if (!discovered)
             {
-                // Невідкритий вид: темний силует і знаки питання
-                DrawFish(g, fish, centerX, fishY, 120, false);
-                // Значок «?» на силуеті
-                var badge = new RectangleF(centerX + 30, fishY - 30, 22, 22);
-                using (var badgeBrush = new SolidBrush(Color.FromArgb(120, 130, 145)))
-                {
-                    g.FillEllipse(badgeBrush, badge);
-                }
-                g.DrawString("?", shopButtonFont, Brushes.White, badge, centerFormat);
-                g.DrawString(entry.DisplayName, resultTitleFont, Brushes.DimGray,
-                    new RectangleF(card.X, card.Y + 78, card.Width, 34), centerFormat);
-                g.DrawString("Ще не спіймано", resultHintFont, Brushes.Gray,
-                    new RectangleF(card.X, card.Y + 116, card.Width, 22), centerFormat);
+                // Невідкритий вид: силует, знак питання, «???»
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+                PixelSprite(g, new[] { ".kkkkk.", "kwwwwwk", "kwkkkwk", "kwwwkwk", "kwwkwwk", "kwwwwwk", "kwwkwwk", ".kkkkk." },
+                    AlertColors, ax + aw - 12, ay + 4);
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.DrawString(entry.DisplayName, resultTitleFont, CardSubText, ArtRect(ax, ay + 42, aw, 16), centerFormat);
+                g.DrawString("Ще не спіймано", resultHintFont, CardSubText, ArtRect(ax, ay + 62, aw, 10), centerFormat);
                 return;
             }
 
-            Color rarityColor = RarityColor(fish.Rarity);
-            DrawFish(g, fish, centerX, fishY, 120, true);
-
-            using (var rarityBrush = new SolidBrush(rarityColor))
+            using (var rarityBrush = new SolidBrush(RarityColor(fish.Rarity)))
             {
-                g.DrawString(fish.Name, shopNameFont, rarityBrush,
-                    new RectangleF(card.X + 2, card.Y + 78, card.Width - 4, 26), centerFormat);
-                g.DrawString(RarityName(fish.Rarity), resultHintFont, rarityBrush,
-                    new RectangleF(card.X, card.Y + 104, card.Width, 20), centerFormat);
+                g.DrawString(fish.Name, shopNameFont, rarityBrush, ArtRect(ax, ay + 40, aw, 12), centerFormat);
+                g.DrawString(RarityName(fish.Rarity), upgradeDescFont, rarityBrush, ArtRect(ax, ay + 52, aw, 8), centerFormat);
             }
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            PixelRect(g, StatLine, ax + 4, ay + 62, aw - 8, 1);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
 
-            int count = catchCounts.TryGetValue(fish.Id, out int c) ? c : 0;
+            int caught = catchCounts.TryGetValue(fish.Id, out int c) ? c : 0;
             double best = bestWeights.TryGetValue(fish.Id, out double w) ? w : 0;
-            g.DrawString($"Спіймано: {count}", shopTextFont, Brushes.Black,
-                new RectangleF(card.X, card.Y + 132, card.Width, 20), centerFormat);
-            g.DrawString($"Рекорд: {FormatWeight(best)}", shopTextFont, Brushes.Black,
-                new RectangleF(card.X, card.Y + 152, card.Width, 20), centerFormat);
-            g.DrawString($"Ціна: від {fish.BasePrice}", shopTextFont, Brushes.DimGray,
-                new RectangleF(card.X, card.Y + 172, card.Width, 20), centerFormat);
+            g.DrawString($"Спіймано: {caught}", shopTextFont, CardText, ArtRect(ax, ay + 65, aw, 9), centerFormat);
+            g.DrawString($"Рекорд: {FormatWeight(best)}", shopTextFont, CardText, ArtRect(ax, ay + 75, aw, 9), centerFormat);
+            g.DrawString($"Ціна: від {fish.BasePrice}", shopTextFont, CardSubText, ArtRect(ax, ay + 85, aw, 9), centerFormat);
         }
 
         private int UpgradePrice(Upgrade upgrade)
@@ -1521,54 +1887,90 @@ namespace Fishing
 
         private enum ShopButtonStyle { Buy, Select, Disabled, Current, Maxed }
 
+        // ---------- Піксельна крамниця (картка 27): стіна з дощок, вивіска, картки-пергаменти
+        private static readonly SolidBrush Plank = new SolidBrush(Color.FromArgb(122, 72, 48));
+        private static readonly SolidBrush PlankLight = new SolidBrush(Color.FromArgb(140, 85, 56));
+        private static readonly SolidBrush PlankShade = new SolidBrush(Color.FromArgb(78, 44, 32));
+        private static readonly SolidBrush Nail = new SolidBrush(Color.FromArgb(60, 60, 70));
+        private static readonly SolidBrush BtnGreen = new SolidBrush(Color.FromArgb(62, 137, 72));
+        private static readonly SolidBrush BtnGreenDark = new SolidBrush(Color.FromArgb(38, 92, 66));
+        private static readonly SolidBrush BtnGrey = new SolidBrush(Color.FromArgb(90, 96, 110));
+        private static readonly SolidBrush BtnGreyDark = new SolidBrush(Color.FromArgb(58, 68, 102));
+        private static readonly SolidBrush BtnOrangeDark = new SolidBrush(Color.FromArgb(190, 110, 30));
+        private static readonly SolidBrush CoinFill = new SolidBrush(Color.FromArgb(247, 180, 40));
+        private static readonly SolidBrush Cream = new SolidBrush(Color.FromArgb(255, 236, 190));
+        private static readonly SolidBrush CardText = new SolidBrush(Color.FromArgb(60, 36, 30));
+        private static readonly SolidBrush CardSubText = new SolidBrush(Color.FromArgb(110, 80, 60));
+        private static readonly SolidBrush LockShade = new SolidBrush(Color.FromArgb(150, 24, 20, 37));
+
+        private static RectangleF ArtRect(float ax, float ay, float aw, float ah)
+        {
+            return new RectangleF(ax * Px, ay * Px, aw * Px, ah * Px);
+        }
+
+        private static void DrawPixelCoin(Graphics g, float ax, float ay)
+        {
+            PixelRect(g, BtnOrangeDark, ax + 1, ay, 3, 1);
+            PixelRect(g, CoinFill, ax, ay + 1, 5, 3);
+            PixelRect(g, BtnOrangeDark, ax + 1, ay + 4, 3, 1);
+            PixelRect(g, BtnOrangeDark, ax + 2, ay + 1, 1, 3);
+            PixelRect(g, Gold, ax + 1, ay + 1, 1, 1);
+        }
+
+        private void DrawPlankWall(Graphics g, float width, float height)
+        {
+            // Стіна крамниці: горизонтальні дошки зі швами вперемішку і цвяхами
+            float aw = (float)Math.Ceiling(width / Px), ah = (float)Math.Ceiling(height / Px);
+            PixelRect(g, Plank, 0, 0, aw, ah);
+            for (int y = 0, row = 0; y < ah; y += 8, row++)
+            {
+                PixelRect(g, PlankShade, 0, y, aw, 1);
+                PixelRect(g, PlankLight, 0, y + 1, aw, 1);
+                for (float x = (row % 2) * 23; x < aw; x += 46)
+                {
+                    PixelRect(g, PlankShade, x, y + 1, 1, 7);
+                    PixelRect(g, Nail, x + 3, y + 4, 1, 1);
+                }
+            }
+        }
+
         private void DrawShopButton(Graphics g, RectangleF rect, string text, ShopButtonStyle style, bool withCoin)
         {
-            Color back, fore;
+            Brush face, light, dark;
             switch (style)
             {
-                case ShopButtonStyle.Buy: back = Color.FromArgb(240, 150, 40); fore = Color.White; break;
-                case ShopButtonStyle.Select: back = Color.FromArgb(70, 160, 110); fore = Color.White; break;
-                case ShopButtonStyle.Current: back = Color.FromArgb(225, 244, 232); fore = Color.FromArgb(40, 130, 80); break;
-                case ShopButtonStyle.Maxed: back = Color.FromArgb(255, 241, 200); fore = Color.FromArgb(170, 120, 10); break;
-                default: back = Color.FromArgb(236, 238, 242); fore = Color.FromArgb(150, 155, 165); break;
+                case ShopButtonStyle.Buy: face = BtnGreen; light = Zone; dark = BtnGreenDark; break;
+                case ShopButtonStyle.Select:
+                case ShopButtonStyle.Maxed: face = Marker; light = Gold; dark = BtnOrangeDark; break;
+                case ShopButtonStyle.Current: face = TrackDark; light = PanelEdge; dark = Ink; break;
+                default: face = BtnGrey; light = PanelEdge; dark = BtnGreyDark; break;
             }
             // Підсвітка при наведенні на активну кнопку
             bool active = style == ShopButtonStyle.Buy || style == ShopButtonStyle.Select;
             if (active && hoveredShopRect.HasValue && hoveredShopRect.Value == rect)
             {
-                back = ControlPaint.Light(back, 0.25f);
+                face = light;
             }
 
-            using (var path = RoundedRect(rect, 8))
-            using (var backBrush = new SolidBrush(back))
-            {
-                g.FillPath(backBrush, path);
-            }
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            DrawPixelPanel(g, rect, face, Ink, light, dark);
 
             // Монетка перед ціною або галочка для поточної локації
-            float iconSize = 16;
-            SizeF textSize = g.MeasureString(text, shopButtonFont);
-            bool hasIcon = (withCoin && coinImage != null) || style == ShopButtonStyle.Current;
-            float contentWidth = textSize.Width + (hasIcon ? iconSize + 4 : 0);
-            float x = rect.X + (rect.Width - contentWidth) / 2;
+            SizeF size = g.MeasureString(text, shopButtonFont);
+            float iconWidth = withCoin ? 7 * Px : style == ShopButtonStyle.Current ? 7 * Px : 0;
+            float x = rect.X + (rect.Width - size.Width - iconWidth) / 2;
             float midY = rect.Y + rect.Height / 2;
-            if (withCoin && coinImage != null)
+            float ax = (float)Math.Round(x / Px), ay = (float)Math.Round(midY / Px) - 2;
+            if (withCoin)
             {
-                g.DrawImage(coinImage, x, midY - iconSize / 2, iconSize, iconSize);
-                x += iconSize + 4;
+                DrawPixelCoin(g, ax, ay);
             }
             else if (style == ShopButtonStyle.Current)
             {
-                using (var check = new Pen(fore, 2.5f))
-                {
-                    g.DrawLines(check, new[] { new PointF(x + 2, midY), new PointF(x + 6, midY + 4), new PointF(x + 14, midY - 5) });
-                }
-                x += iconSize + 4;
+                PixelSprite(g, new[] { "....w", "w..w.", ".ww.." }, AlertColors, ax, ay + 1);
             }
-            using (var foreBrush = new SolidBrush(fore))
-            {
-                g.DrawString(text, shopButtonFont, foreBrush, x, midY - textSize.Height / 2);
-            }
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.DrawString(text, shopButtonFont, Brushes.White, x + iconWidth, midY - size.Height / 2);
         }
 
         private void PnlShop_MouseMove(object sender, MouseEventArgs e)
@@ -1596,94 +1998,87 @@ namespace Fishing
         {
             Graphics g = e.Graphics;
             g.ScaleTransform(DpiScale, DpiScale);
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
 
             float width = pnlShop.ClientSize.Width / DpiScale;
             float height = pnlShop.ClientSize.Height / DpiScale;
+            float aw = (float)Math.Floor(width / Px);
             shopButtons.Clear();
 
-            // М'який градієнт: від блакитного вгорі до світлого внизу
-            using (var background = new System.Drawing.Drawing2D.LinearGradientBrush(
-                new RectangleF(0, 0, width, height), Color.FromArgb(214, 234, 248), Color.FromArgb(246, 250, 253), 90f))
-            {
-                g.FillRectangle(background, 0, 0, width, height);
-            }
+            DrawPlankWall(g, width, height);
 
-            g.DrawString("Магазин", resultTitleFont, Brushes.Black, new RectangleF(0, 2, width, 34), centerFormat);
+            // Вивіска на двох цвяхах
+            float signX = (float)Math.Round(aw / 2 - 50);
+            PixelRect(g, Nail, signX + 10, 0, 1, 3);
+            PixelRect(g, Nail, signX + 89, 0, 1, 3);
+            DrawPixelPanel(g, ArtRect(signX, 3, 100, 16), PlankLight, Ink, Wood, PlankShade);
+            g.DrawString("Магазин", shopTitleFont, Cream, ArtRect(signX, 3, 100, 16), centerFormat);
             if (!string.IsNullOrEmpty(shopMessage))
             {
-                g.DrawString(shopMessage, shopTextFont, Brushes.DimGray, new RectangleF(0, 32, width, 18), centerFormat);
+                g.DrawString(shopMessage, shopTextFont, Cream, new RectangleF(0, 21 * Px, width, 18), centerFormat);
             }
 
             // --- Локації: 3 картки в ряд
-            DrawSectionTitle(g, "Локації", 26, 46);
-            const float locWidth = 240, locHeight = 122, locGap = 15, locTop = 68;
-            float locLeft = (width - (3 * locWidth + 2 * locGap)) / 2;
+            g.DrawString("Локації", shopNameFont, Cream, 14 * Px, 21 * Px);
+            const float locW = 120, locH = 62, locGap = 7, locTop = 34;
+            float locLeft = (float)Math.Round((aw - (3 * locW + 2 * locGap)) / 2);
             for (int i = 0; i < Catalog.Locations.Count; i++)
             {
-                DrawLocationCard(g, Catalog.Locations[i], new RectangleF(locLeft + i * (locWidth + locGap), locTop, locWidth, locHeight));
+                DrawLocationCard(g, Catalog.Locations[i], locLeft + i * (locW + locGap), locTop, locW, locH);
             }
 
             // --- Покращення: 5 карток у ряд
-            DrawSectionTitle(g, "Покращення", 26, 198);
-            const float upWidth = 140, upHeight = 172, upGap = 12, upTop = 220;
-            float upLeft = (width - (5 * upWidth + 4 * upGap)) / 2;
+            g.DrawString("Покращення", shopNameFont, Cream, 14 * Px, 99 * Px);
+            const float upW = 70, upH = 82, upGap = 6, upTop = 112;
+            float upLeft = (float)Math.Round((aw - (5 * upW + 4 * upGap)) / 2);
             for (int i = 0; i < UpgradeCatalog.All.Count; i++)
             {
-                DrawUpgradeCard(g, UpgradeCatalog.All[i], new RectangleF(upLeft + i * (upWidth + upGap), upTop, upWidth, upHeight));
+                DrawUpgradeCard(g, UpgradeCatalog.All[i], upLeft + i * (upW + upGap), upTop, upW, upH);
             }
         }
 
-        private void DrawSectionTitle(Graphics g, string text, float x, float y)
-        {
-            using (var accent = new SolidBrush(Color.FromArgb(240, 150, 40)))
-            {
-                g.FillRectangle(accent, x, y + 3, 4, 16);
-            }
-            g.DrawString(text, shopNameFont, Brushes.Black, x + 9, y);
-        }
-
-        private void DrawLocationCard(Graphics g, Location location, RectangleF card)
+        private void DrawLocationCard(Graphics g, Location location, float ax, float ay, float aw, float ah)
         {
             bool unlocked = ShopService.IsLocationUnlocked(player, location);
             bool current = player.CurrentLocationId == location.Id;
 
-            DrawCard(g, card, current ? Color.FromArgb(240, 150, 40) : Color.FromArgb(214, 220, 228));
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            DrawPixelPanel(g, ArtRect(ax, ay, aw, ah), Parchment, WoodDark, FloatWhite, ParchmentDark);
 
-            // Верх картки — фон локації (обрізаний за заокругленими кутами)
-            var band = new RectangleF(card.X, card.Y, card.Width, 54);
-            using (var clip = RoundedRect(card, 12))
+            // Картина локації — смужка з її фону
+            RectangleF picture = ArtRect(ax + 3, ay + 3, aw - 6, 28);
+            if (backgrounds.TryGetValue(location.Id, out Image thumbnail))
             {
-                var previousClip = g.Clip;
-                g.SetClip(clip, System.Drawing.Drawing2D.CombineMode.Intersect);
-                if (backgrounds.TryGetValue(location.Id, out Image thumbnail))
-                {
-                    float sourceHeight = thumbnail.Width * band.Height / band.Width;
-                    var source = new RectangleF(0, thumbnail.Height * 0.36f - sourceHeight / 2, thumbnail.Width, sourceHeight);
-                    g.DrawImage(thumbnail, band, source, GraphicsUnit.Pixel);
-                }
-                else
-                {
-                    using (var bandBrush = new SolidBrush(LocationColor(location.Id)))
-                    {
-                        g.FillRectangle(bandBrush, band);
-                    }
-                }
-                // Затемнення знизу смужки, щоб назва читалась на будь-якому фоні
-                using (var shade = new System.Drawing.Drawing2D.LinearGradientBrush(
-                    band, Color.FromArgb(10, 0, 0, 0), Color.FromArgb(130, 0, 0, 0), 90f))
-                {
-                    g.FillRectangle(shade, band);
-                }
-                g.Clip = previousClip;
+                float sourceHeight = thumbnail.Width * picture.Height / picture.Width;
+                var source = new RectangleF(0, thumbnail.Height * 0.36f - sourceHeight / 2, thumbnail.Width, sourceHeight);
+                var previousMode = g.InterpolationMode;
+                g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+                g.DrawImage(thumbnail, picture, source, GraphicsUnit.Pixel);
+                g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Default;
+                g.InterpolationMode = previousMode;
             }
-            g.DrawString(location.Name, shopNameFont, Brushes.White, new RectangleF(card.X, card.Y + 26, card.Width, 26), centerFormat);
+            else
+            {
+                using (var fallback = new SolidBrush(LocationColor(location.Id)))
+                {
+                    g.FillRectangle(fallback, picture);
+                }
+            }
+            if (!unlocked)
+            {
+                // Закрита локація: затемнена картина із замком
+                g.FillRectangle(LockShade, picture);
+                PixelSprite(g, new[] { "..kkk..", ".k...k.", ".k...k.", "kkkkkkk", "kwwwwwk", "kwwkwwk", "kwwwwwk", "kkkkkkk" },
+                    AlertColors, ax + aw / 2 - 3, ay + 13);
+            }
+            PixelRect(g, WoodDark, ax + 3, ay + 31, aw - 6, 1);
 
-            string info = unlocked ? $"Видів риби: {location.Fishes.Count}" : $"Закрито · видів риби: {location.Fishes.Count}";
-            g.DrawString(info, shopTextFont, Brushes.DimGray, new RectangleF(card.X, card.Y + 58, card.Width, 20), centerFormat);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.DrawString(location.Name, shopNameFont, CardText, ArtRect(ax, ay + 32, aw, 13), centerFormat);
 
-            var buttonRect = new RectangleF(card.X + 18, card.Bottom - 40, card.Width - 36, 30);
+            RectangleF buttonRect = ArtRect(ax + 10, ay + ah - 15, aw - 20, 11);
             if (current)
             {
                 DrawShopButton(g, buttonRect, "Поточна", ShopButtonStyle.Current, false);
@@ -1705,91 +2100,70 @@ namespace Fishing
             }
         }
 
-        private static Color UpgradeColor(UpgradeType type)
+        private static readonly Dictionary<char, Brush> UpgradeIconColors = new Dictionary<char, Brush>
         {
+            { 'k', Ink }, { 'a', RodLight }, { 's', FloatRed }, { 'b', MetalLight }, { 'w', FloatWhite },
+            { 'p', FloatRedLight }, { 'y', Gold },
+        };
+
+        // Кольори значків на піксельних кнопках меню (оголошено після пензлів, щоб вони вже були створені)
+        private static readonly Dictionary<char, Brush> ButtonIconColors = new Dictionary<char, Brush>
+        {
+            { 'k', Ink }, { 'w', FloatWhite }, { 'y', Gold }, { 'o', BtnOrangeDark }, { 'a', Wood }, { 'd', WoodDark },
+            { 'r', FloatRed }, { 'l', FloatRedLight }, { 'g', Zone }, { 'e', ZoneDark }, { 'm', MetalDark }, { 'b', MetalLight },
+            { 'c', PlankLight }, { 't', Track }, { 'n', TrackDark }, { 'p', Parchment }, { 'q', ParchmentDark },
+        };
+
+        private static string[] UpgradeIcon(UpgradeType type)
+        {
+            // Значки 10x10 арт-пікселів: вудка, котушка, хробак, секундомір, гаманець
             switch (type)
             {
-                case UpgradeType.CatchBar: return Color.FromArgb(70, 160, 110);
-                case UpgradeType.CastRange: return Color.FromArgb(70, 130, 200);
-                case UpgradeType.BiteSpeed: return Color.FromArgb(200, 110, 140);
-                case UpgradeType.ReactionWindow: return Color.FromArgb(140, 110, 200);
-                default: return Color.FromArgb(225, 160, 40);
+                case UpgradeType.CatchBar: return new[] { "........ka", ".......ka.", "......ka..", ".....ka...", "....ka....", "...ka.....", "..ka......", ".kssk.....", "kssk......", ".kk......." };
+                case UpgradeType.CastRange: return new[] { ".kkkkkkkk.", "kbbbbbbbbk", "kbwwwwwwbk", "kbbbbbbbbk", "kbwwwwwwbk", "kbbbbbbbbk", "kbwwwwwwbk", "kbbbbbbbbk", ".kkkkkkkk.", ".........." };
+                case UpgradeType.BiteSpeed: return new[] { "......kk..", ".....kppk.", "....kpkkpk", "...kpk..k.", "..kpk.....", ".kpk......", "kpk.......", "kpk.......", ".kpk......", "..kk......" };
+                case UpgradeType.ReactionWindow: return new[] { "...kkkk...", "..kwwwwk..", ".kwwwkwwk.", "kwwwwkwwwk", "kwwwwkwwwk", "kwwwwkkkwk", "kwwwwwwwwk", ".kwwwwwwk.", "..kwwwwk..", "...kkkk..." };
+                default: return new[] { "...kkkk...", "....kk....", "..kyyyyk..", ".kyyyyyyk.", "kyyykkyyyk", "kyykyyyyyk", "kyyykkyyyk", "kyyyyykyyk", ".kykkyyyk.", "..kkkkkk.." };
             }
         }
 
-        private static void DrawUpgradeIcon(Graphics g, UpgradeType type, PointF c)
+        private static void PixelSpriteScaled(Graphics g, string[] rows, Dictionary<char, Brush> colors, float ax, float ay, int scale)
         {
-            // Прості білі значки на кольоровому кружку
-            using (var pen = new Pen(Color.White, 2.4f) { StartCap = System.Drawing.Drawing2D.LineCap.Round, EndCap = System.Drawing.Drawing2D.LineCap.Round })
+            for (int y = 0; y < rows.Length; y++)
             {
-                switch (type)
+                for (int x = 0; x < rows[y].Length; x++)
                 {
-                    case UpgradeType.CatchBar: // вудка з котушкою
-                        g.DrawLine(pen, c.X - 9, c.Y + 9, c.X + 9, c.Y - 9);
-                        g.DrawEllipse(pen, c.X - 7, c.Y + 1, 6, 6);
-                        g.DrawLine(pen, c.X + 9, c.Y - 9, c.X + 9, c.Y + 3);
-                        break;
-                    case UpgradeType.CastRange: // котушка волосіні і стрілка вдаль
-                        g.DrawEllipse(pen, c.X - 10, c.Y - 6, 12, 12);
-                        g.DrawLine(pen, c.X + 2, c.Y, c.X + 10, c.Y);
-                        g.DrawLines(pen, new[] { new PointF(c.X + 6, c.Y - 4), new PointF(c.X + 10, c.Y), new PointF(c.X + 6, c.Y + 4) });
-                        break;
-                    case UpgradeType.BiteSpeed: // хробак
-                        g.DrawBezier(pen, c.X - 10, c.Y + 2, c.X - 5, c.Y - 8, c.X, c.Y + 10, c.X + 5, c.Y);
-                        g.DrawLine(pen, c.X + 5, c.Y, c.X + 9, c.Y - 4);
-                        break;
-                    case UpgradeType.ReactionWindow: // секундомір
-                        g.DrawEllipse(pen, c.X - 8, c.Y - 6, 16, 16);
-                        g.DrawLine(pen, c.X, c.Y + 2, c.X, c.Y - 3);
-                        g.DrawLine(pen, c.X, c.Y + 2, c.X + 4, c.Y + 4);
-                        g.DrawLine(pen, c.X - 2, c.Y - 10, c.X + 2, c.Y - 10);
-                        break;
-                    default: // монета з плюсом
-                        g.DrawEllipse(pen, c.X - 9, c.Y - 9, 18, 18);
-                        g.DrawLine(pen, c.X - 4, c.Y, c.X + 4, c.Y);
-                        g.DrawLine(pen, c.X, c.Y - 4, c.X, c.Y + 4);
-                        break;
+                    if (colors.TryGetValue(rows[y][x], out Brush brush))
+                    {
+                        PixelRect(g, brush, ax + x * scale, ay + y * scale, scale, scale);
+                    }
                 }
             }
         }
 
-        private void DrawUpgradeCard(Graphics g, Upgrade upgrade, RectangleF card)
+        private void DrawUpgradeCard(Graphics g, Upgrade upgrade, float ax, float ay, float aw, float ah)
         {
             int level = UpgradeLevel(upgrade);
             bool maxed = level >= upgrade.MaxLevel;
             int price = UpgradePrice(upgrade);
-            Color color = UpgradeColor(upgrade.Type);
 
-            DrawCard(g, card, Color.FromArgb(214, 220, 228));
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            DrawPixelPanel(g, ArtRect(ax, ay, aw, ah), Parchment, WoodDark, FloatWhite, ParchmentDark);
+            PixelSpriteScaled(g, UpgradeIcon(upgrade.Type), UpgradeIconColors, ax + aw / 2 - 10, ay + 4, 2);
 
-            // Значок покращення
-            var iconCenter = new PointF(card.X + card.Width / 2, card.Y + 30);
-            using (var badge = new SolidBrush(color))
+            // Рівень: заповнені комірки — куплені рівні
+            float pipsLeft = ax + aw / 2 - (upgrade.MaxLevel * 11 - 2) / 2f;
+            for (int i = 0; i < upgrade.MaxLevel; i++)
             {
-                g.FillEllipse(badge, iconCenter.X - 20, iconCenter.Y - 20, 40, 40);
-            }
-            DrawUpgradeIcon(g, upgrade.Type, iconCenter);
-
-            g.DrawString(upgrade.Name, shopButtonFont, Brushes.Black, new RectangleF(card.X + 4, card.Y + 54, card.Width - 8, 24), centerFormat);
-            g.DrawString(upgrade.Description, shopTextFont, Brushes.DimGray, new RectangleF(card.X + 6, card.Y + 78, card.Width - 12, 34), centerFormat);
-
-            // Рівень сегментами: заповнені — куплені
-            const float segmentWidth = 30, segmentGap = 5;
-            float segmentsLeft = card.X + (card.Width - (upgrade.MaxLevel * segmentWidth + (upgrade.MaxLevel - 1) * segmentGap)) / 2;
-            using (var filled = new SolidBrush(color))
-            using (var empty = new SolidBrush(Color.FromArgb(226, 230, 236)))
-            {
-                for (int i = 0; i < upgrade.MaxLevel; i++)
-                {
-                    var segment = new RectangleF(segmentsLeft + i * (segmentWidth + segmentGap), card.Y + 118, segmentWidth, 6);
-                    using (var path = RoundedRect(segment, 3))
-                    {
-                        g.FillPath(i < level ? filled : empty, path);
-                    }
-                }
+                PixelRect(g, Ink, pipsLeft + i * 11, ay + 47, 9, 3);
+                PixelRect(g, i < level ? (Brush)Zone : TrackDark, pipsLeft + i * 11 + 1, ay + 48, 7, 1);
             }
 
-            var buttonRect = new RectangleF(card.X + 10, card.Bottom - 40, card.Width - 20, 30);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.DrawString(upgrade.Name, upgradeNameFont, CardText, ArtRect(ax, ay + 26, aw, 9), centerFormat);
+            g.DrawString(upgrade.Description, upgradeDescFont, CardSubText, ArtRect(ax, ay + 35, aw, 9), centerFormat);
+
+            RectangleF buttonRect = ArtRect(ax + 5, ay + ah - 16, aw - 10, 11);
             if (maxed)
             {
                 DrawShopButton(g, buttonRect, "Максимум", ShopButtonStyle.Maxed, false);
@@ -1806,40 +2180,54 @@ namespace Fishing
             }
         }
 
+        private static readonly Dictionary<char, Brush> FishIconColors = new Dictionary<char, Brush>
+        {
+            { 'k', Ink }, { 'w', FloatWhite },
+        };
+
         private void DrawFightBar(Graphics g)
         {
-            const int barWidth = 30;
-            const int barHeight = 300;
-            const int barTop = 60;
-            float barLeft = LogicalWidth - 80;
+            // Піксельна смуга міні-гри в дерев'яній рамці; ліворуч — шкала прогресу
+            float ax = (float)Math.Floor(LogicalWidth / Px) - 40, ay = 30;
+            const float trackW = 13, trackH = 148;
+            DrawPixelPanel(g, new RectangleF((ax - 2) * Px, (ay - 2) * Px, (trackW + 4) * Px, (trackH + 4) * Px), Track, WoodDark, Wood, null);
+            PixelRect(g, TrackDark, ax, ay, trackW, 6);                      // темніше вгорі — глибина
 
-            // Фон смуги
-            g.FillRectangle(Brushes.White, barLeft, barTop, barWidth, barHeight);
+            // Зелена зона навколо playerPos: значення 100 — верх смуги, 0 — низ
+            float zoneHigh = Math.Min(100f, playerPos + ZoneHalfSize);
+            float zoneLow = Math.Max(0f, playerPos - ZoneHalfSize);
+            float zTop = (float)Math.Round(ay + (100f - zoneHigh) / 100f * trackH);
+            float zBottom = (float)Math.Round(ay + (100f - zoneLow) / 100f * trackH);
+            PixelRect(g, Zone, ax, zTop, trackW, Math.Max(1, zBottom - zTop));
+            PixelRect(g, ZoneLight, ax, zTop, trackW, 1);
+            PixelRect(g, ZoneDark, ax, zBottom - 1, trackW, 1);
+            PixelRect(g, ZoneDark, ax + trackW - 1, zTop + 1, 1, Math.Max(0, zBottom - zTop - 2));
 
-            // Зелена зона навколо центру playerPos: значення 100 — верх смуги, 0 — низ
-            float zoneHighValue = Math.Min(100f, playerPos + ZoneHalfSize);
-            float zoneLowValue = Math.Max(0f, playerPos - ZoneHalfSize);
-            float zoneTop = barTop + (100f - zoneHighValue) / 100f * barHeight;
-            float zoneBottom = barTop + (100f - zoneLowValue) / 100f * barHeight;
-            g.FillRectangle(Brushes.LightGreen, barLeft, zoneTop, barWidth, zoneBottom - zoneTop);
-
-            // Рамка смуги
-            g.DrawRectangle(Pens.Black, barLeft, barTop, barWidth, barHeight);
-
-            // Риба: темно-червона точка, що плаває по смузі
-            float fishY = barTop + (100f - fishPos) / 100f * barHeight;
+            // Риба: маленький піксельний силует кольору рідкості
+            float fishY = (float)Math.Round(ay + (100f - fishPos) / 100f * trackH);
             Color fishColor = hookedFish == null ? Color.DarkRed : RarityColor(hookedFish.Rarity);
-            using (var fishBrush = new SolidBrush(fishColor))
+            using (var body = new SolidBrush(fishColor))
             {
-                g.FillEllipse(fishBrush, barLeft + barWidth / 2f - 7, fishY - 6, 14, 12);
+                var colors = new Dictionary<char, Brush>(FishIconColors) { { 'f', body } };
+                PixelSprite(g, new[]
+                {
+                    ".kkkk..k",
+                    "kwkffkkf",
+                    "kfffffff",
+                    ".kkkk..k",
+                }, colors, ax + 2, fishY - 2);
             }
-            g.DrawEllipse(Pens.Black, barLeft + barWidth / 2f - 7, fishY - 6, 14, 12);
 
-            // Шкала прогресу зліва від смуги, заповнюється знизу вгору
-            float progressLeft = barLeft - 30;
-            g.DrawRectangle(Pens.Black, progressLeft, barTop, 16, barHeight);
-            float fillHeight = fightProgress / 100f * barHeight;
-            g.FillRectangle(Brushes.Gold, progressLeft + 1, barTop + barHeight - fillHeight, 14, fillHeight);
+            // Шкала прогресу: заповнюється знизу вгору, колір від червоного до зеленого
+            float px = ax - 8;
+            DrawPixelPanel(g, new RectangleF((px - 1) * Px, (ay - 2) * Px, 6 * Px, (trackH + 4) * Px), TrackDark, WoodDark, null, null);
+            float fill = (float)Math.Round(fightProgress / 100f * trackH);
+            Brush color = fightProgress < 30 ? FloatRed : fightProgress < 65 ? (Brush)ParchmentDark : Zone;
+            if (fill > 0)
+            {
+                PixelRect(g, color, px, ay + trackH - fill, 4, fill);
+                PixelRect(g, FloatWhite, px, ay + trackH - fill, 4, 1);
+            }
         }
     }
 }
