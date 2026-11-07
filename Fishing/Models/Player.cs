@@ -15,5 +15,8 @@ namespace Fishing.Models
 
         /// <summary>Id покращення → куплений рівень.</summary>
         public Dictionary<int, int> UpgradeLevels { get; } = new Dictionary<int, int>();
+
+        /// <summary>Id видів риб, які гравець уже ловив (для журналу).</summary>
+        public HashSet<int> DiscoveredFishIds { get; } = new HashSet<int>();
     }
 }
