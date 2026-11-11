@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{434D6520-32EB-464A-9768-DA2E7E98FBE9}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>Fishing</RootNamespace>
+    <AssemblyName>Fishing</AssemblyName>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System">
+      <HintPath>..\..\..\..\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2\System.dll</HintPath>
+    </Reference>
+    <Reference Include="System.Core" />
+    <Reference Include="System.Xml.Linq" />
+    <Reference Include="System.Data.DataSetExtensions" />
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="System.Data" />
+    <Reference Include="System.Deployment" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Net.Http" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Xml" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Form1.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="Form1.Designer.cs">
+      <DependentUpon>Form1.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Models\Bait.cs" />
+    <Compile Include="Models\Catalog.cs" />
+    <Compile Include="Models\CatchResult.cs" />
+    <Compile Include="Models\CatchService.cs" />
+    <Compile Include="Models\Fish.cs" />
+    <Compile Include="Models\FishPicker.cs" />
+    <Compile Include="Models\JournalEntry.cs" />
+    <Compile Include="Models\JournalService.cs" />
+    <Compile Include="Models\Location.cs" />
+    <Compile Include="Models\Player.cs" />
+    <Compile Include="Models\PurchaseResult.cs" />
+    <Compile Include="Models\Rarity.cs" />
+    <Compile Include="Models\SaveData.cs" />
+    <Compile Include="Models\SaveService.cs" />
+    <Compile Include="Models\ShopService.cs" />
+    <Compile Include="Models\Upgrade.cs" />
+    <Compile Include="Models\UpgradeCatalog.cs" />
+    <Compile Include="Program.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+    <EmbeddedResource Include="Form1.resx">
+      <DependentUpon>Form1.cs</DependentUpon>
+    </EmbeddedResource>
+    <!-- Графіка гри (картка 16): вбудована в .exe, завантажується через LoadEmbeddedImage -->
+    <EmbeddedResource Include="Assets\Backgrounds\bg_lake.png">
+      <LogicalName>Fishing.Assets.Backgrounds.bg_lake.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Backgrounds\bg_river.png">
+      <LogicalName>Fishing.Assets.Backgrounds.bg_river.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Backgrounds\bg_sea.png">
+      <LogicalName>Fishing.Assets.Backgrounds.bg_sea.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_01_karas.png">
+      <LogicalName>Fishing.Assets.Fish.fish_01_karas.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_02_plotva.png">
+      <LogicalName>Fishing.Assets.Fish.fish_02_plotva.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_03_okun.png">
+      <LogicalName>Fishing.Assets.Fish.fish_03_okun.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_04_korop.png">
+      <LogicalName>Fishing.Assets.Fish.fish_04_korop.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_05_zolotyi_korop.png">
+      <LogicalName>Fishing.Assets.Fish.fish_05_zolotyi_korop.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_06_holovan.png">
+      <LogicalName>Fishing.Assets.Fish.fish_06_holovan.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_07_liashch.png">
+      <LogicalName>Fishing.Assets.Fish.fish_07_liashch.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_08_shchuka.png">
+      <LogicalName>Fishing.Assets.Fish.fish_08_shchuka.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_09_som.png">
+      <LogicalName>Fishing.Assets.Fish.fish_09_som.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_10_biluha.png">
+      <LogicalName>Fishing.Assets.Fish.fish_10_biluha.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_11_khamsa.png">
+      <LogicalName>Fishing.Assets.Fish.fish_11_khamsa.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_12_kambala.png">
+      <LogicalName>Fishing.Assets.Fish.fish_12_kambala.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_13_tunets.png">
+      <LogicalName>Fishing.Assets.Fish.fish_13_tunets.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_14_ryba_mech.png">
+      <LogicalName>Fishing.Assets.Fish.fish_14_ryba_mech.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Fish\fish_15_mehalodon.png">
+      <LogicalName>Fishing.Assets.Fish.fish_15_mehalodon.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Icons\icon_coin.png">
+      <LogicalName>Fishing.Assets.Icons.icon_coin.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Icons\icon_journal.png">
+      <LogicalName>Fishing.Assets.Icons.icon_journal.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Icons\icon_menu.png">
+      <LogicalName>Fishing.Assets.Icons.icon_menu.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Assets\Icons\icon_shop.png">
+      <LogicalName>Fishing.Assets.Icons.icon_shop.png</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Properties\Resources.resx">
+      <Generator>ResXFileCodeGenerator</Generator>
+      <LastGenOutput>Resources.Designer.cs</LastGenOutput>
+      <SubType>Designer</SubType>
+    </EmbeddedResource>
+    <Compile Include="Properties\Resources.Designer.cs">
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Resources.resx</DependentUpon>
+    </Compile>
+    <None Include="Properties\Settings.settings">
+      <Generator>SettingsSingleFileGenerator</Generator>
+      <LastGenOutput>Settings.Designer.cs</LastGenOutput>
+    </None>
+    <Compile Include="Properties\Settings.Designer.cs">
+      <AutoGen>True</AutoGen>
+      <DependentUpon>Settings.settings</DependentUpon>
+      <DesignTimeSharedInput>True</DesignTimeSharedInput>
+    </Compile>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="App.config" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>
