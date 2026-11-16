@@ -5,9 +5,11 @@ using System.Data;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Drawing.Text;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
@@ -86,10 +88,27 @@ namespace Fishing
             new List<(RectangleF Rect, bool Enabled, Action OnClick)>();
 
         // Масштаб екрана: 1.0 при 100%, 1.25 при 125% і т. д.
-        // Гра малюється в логічних пікселях (як при 100%), а Graphics масштабує їх під екран.
         private float DpiScale => DeviceDpi / 96f;
-        private float LogicalWidth => pnlGame.ClientSize.Width / DpiScale;
-        private float LogicalHeight => pnlGame.ClientSize.Height / DpiScale;
+
+        // Гра малюється в логічних пікселях: поле 800x400 і верхня панель 50 над ним.
+        // ViewScale — скільки екранних пікселів в одному логічному: у вікні він кратний 0,5
+        // (арт-піксель = ціле число екранних, без розмиття), розгорнуте вікно — поле на весь екран.
+        private const int FieldWidth = 800;
+        private const int FieldHeight = 400;
+        private const int TopBarHeight = 50;
+        private float viewScale = 1f;
+        private bool layingOut;
+        private readonly Dictionary<int, Image> coinImages = new Dictionary<int, Image>(); // монетка під кожен масштаб
+        private float ViewScale => viewScale;
+        // Масштаб кнопок і верхньої панелі: у вікні такий самий, на весь екран — трохи менший за поле,
+        // щоб кнопки не роздувались (і кратний 0,5, щоб лишались чіткими)
+        private float uiScale = 1f;
+        private float UiScale => uiScale;
+        // Текст на панелях гри: на весь екран зменшується так само, як кнопки (піксель шрифту = UiScale екранних)
+        private float panelTextFactor = 1f;
+        private float textFactor = 1f; // поточний: 1 для кнопок і верхньої панелі, panelTextFactor для панелей гри
+        private float LogicalWidth => pnlGame.ClientSize.Width / ViewScale;
+        private float LogicalHeight => pnlGame.ClientSize.Height / ViewScale;
 
         // Графіка з картки 16: вбудовані в збірку PNG (Fishing/Assets)
         private readonly Dictionary<int, Image> fishSprites = new Dictionary<int, Image>();      // Id риби → спрайт
@@ -101,24 +120,24 @@ namespace Fishing
         private readonly PictureBox pbCoin = new PictureBox();
 
         // Ресурси для малювання: створюються один раз, а не в кожному кадрі.
-        // Шрифти в пікселях, щоб масштаб не застосувався до них двічі.
         private readonly Pen rodPen = new Pen(Color.SaddleBrown, 3);
         private readonly Pen linePen = new Pen(Color.FromArgb(235, 245, 245, 245), 1.5f); // волосінь
-        private readonly Font alertFont = new Font("Segoe UI", 27F, FontStyle.Bold, GraphicsUnit.Pixel);
-        private readonly Font statusFont = new Font("Segoe UI", 19F, FontStyle.Bold, GraphicsUnit.Pixel);
-        private readonly Font resultTitleFont = new Font("Segoe UI", 26F, FontStyle.Bold, GraphicsUnit.Pixel);
-        private readonly Font resultTextFont = new Font("Segoe UI", 18F, FontStyle.Regular, GraphicsUnit.Pixel);
-        private readonly Font resultHintFont = new Font("Segoe UI", 14F, FontStyle.Italic, GraphicsUnit.Pixel);
-        private readonly Font shopNameFont = new Font("Segoe UI", 17F, FontStyle.Bold, GraphicsUnit.Pixel);
-        private readonly Font shopTextFont = new Font("Segoe UI", 13F, FontStyle.Regular, GraphicsUnit.Pixel);
-        private readonly Font shopButtonFont = new Font("Segoe UI", 14F, FontStyle.Bold, GraphicsUnit.Pixel);
-        private readonly Font shopTitleFont = new Font("Segoe UI", 22F, FontStyle.Bold, GraphicsUnit.Pixel);
-        private readonly Font menuTitleFont = new Font("Segoe UI", 44F, FontStyle.Bold, GraphicsUnit.Pixel);
-        private readonly Font menuButtonFont = new Font("Segoe UI", 18F, FontStyle.Bold, GraphicsUnit.Pixel);
-        private readonly Font upgradeNameFont = new Font("Segoe UI", 12F, FontStyle.Bold, GraphicsUnit.Pixel);
-        private readonly Font upgradeDescFont = new Font("Segoe UI", 10.5F, FontStyle.Regular, GraphicsUnit.Pixel);
         private readonly SolidBrush overlayBrush = new SolidBrush(Color.FromArgb(140, 0, 0, 0));
-        private readonly StringFormat centerFormat = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+
+        // ---------- Піксельний шрифт (картка 28): Tiny5, кегль 8 пікселів, вбудований у .exe як ресурс.
+        // Текст спершу малюється в маленьку картинку піксель у піксель, а потім збільшується без розмиття,
+        // як і фони: 1 піксель шрифту = 1 арт-піксель (TextBody) або 2 арт-пікселі (TextTitle).
+        private const int TextBody = 2;
+        private const int TextTitle = 4;
+        private const float PixelTextCenter = 4.5f; // середина великої літери від верху рядка, у пікселях шрифту
+        private const int PixelLineStep = 10;        // відстань між рядками, у пікселях шрифту
+        private static PrivateFontCollection pixelFontCollection;
+        private static IntPtr pixelFontMemory = IntPtr.Zero;
+        private static Font pixelFont; // null — шрифт не завантажився, тоді малюємо запасним Segoe UI
+        private static readonly StringFormat pixelFormat = CreatePixelFormat();
+        private readonly Dictionary<string, (Bitmap Image, int Width)> pixelTextCache = new Dictionary<string, (Bitmap Image, int Width)>();
+        private readonly Dictionary<int, Font> fallbackFonts = new Dictionary<int, Font>();
+
         private readonly StringFormat rightFormat = new StringFormat { Alignment = StringAlignment.Far };
 
         private readonly System.Windows.Forms.Timer tmrCast = new System.Windows.Forms.Timer { Interval = 16 };
@@ -140,6 +159,9 @@ namespace Fishing
 
         // Кнопка повернення в меню на ігровому екрані (створюється в коді, а не в дизайнері)
         private readonly Button btnMenu = new Button();
+        private readonly Button btnFullscreen = new Button();   // вгорі праворуч: на весь екран / у вікно
+        private readonly ToolTip fullscreenTip = new ToolTip();
+        private bool isFullscreen;
         private readonly Button btnNewGame = new Button();
         private bool lastIsRecord;   // улов побив рекорд ваги цього виду
 
@@ -149,16 +171,15 @@ namespace Fishing
         public Form1()
         {
             InitializeComponent();
+            LoadPixelFont();
 
             LoadGameImages();
 
-            // Фіксований розмір вікна: не можна тягнути краї і розгортати
+            // Розмір вікна користувач не змінює: краї не тягнуться, кнопки «розгорнути» в заголовку немає.
+            // Два режими перемикає кнопка гри вгорі праворуч (або F11): вікно фіксованого розміру або весь екран.
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
-
-            // Панелі займають всю область під написом монет
-            pnlMenu.Size = new Size(ClientSize.Width, ClientSize.Height - pnlMenu.Top);
-            pnlGame.Size = new Size(ClientSize.Width, ClientSize.Height - pnlGame.Top);
+            StartPosition = FormStartPosition.CenterScreen;
 
             // Клавіатура: пробіл дублює ЛКМ
             KeyPreview = true;
@@ -176,16 +197,9 @@ namespace Fishing
             btnShop.Location = new Point(btnJournal.Left, btnExit.Top);
             btnShop.UseVisualStyleBackColor = true;
 
-            // Піксельна монета біля лічильника (малюється з коду цілим масштабом — без розмиття)
-            int coinScale = Math.Max(2, (int)Math.Round(26 * DpiScale / 12f));
-            pbCoin.Image = MakePixelBitmap(CoinSprite, coinScale);
-            coinImage = pbCoin.Image;
-            loadedImages.Add(pbCoin.Image);
+            // Піксельна монета біля лічильника (розмір і місце задає LayoutWindow)
             pbCoin.SizeMode = PictureBoxSizeMode.CenterImage;
             pbCoin.BackColor = Color.Transparent;
-            pbCoin.Size = pbCoin.Image.Size;
-            pbCoin.Location = new Point(lblScore.Left, lblScore.Top + (lblScore.Height - pbCoin.Height) / 2);
-            lblScore.Left += pbCoin.Width + (int)(6 * DpiScale);
             Controls.Add(pbCoin);
             btnShop.Click += (s, e) => { shopMessage = ""; ShowPanel(pnlShop); };
             pnlMenu.Controls.Add(btnShop);
@@ -204,10 +218,10 @@ namespace Fishing
             EnableDoubleBuffering(pnlMenu);
             pnlMenu.Paint += PnlMenu_Paint;
             pnlMenu.SizeChanged += (s, e) => LayoutMenu();
-            LayoutMenu();
             BackColor = Color.FromArgb(62, 39, 49);
             lblScore.ForeColor = Color.FromArgb(255, 236, 190);
             lblScore.BackColor = Color.Transparent;
+            lblScore.Visible = false; // напис монет малює Form1_Paint піксельним шрифтом
             Paint += Form1_Paint;
             try
             {
@@ -219,8 +233,6 @@ namespace Fishing
             }
 
             // Панель магазину на місці ігрової
-            pnlShop.Location = pnlGame.Location;
-            pnlShop.Size = pnlGame.Size;
             pnlShop.BackColor = Color.FromArgb(240, 246, 250);
             pnlShop.Visible = false;
             EnableDoubleBuffering(pnlShop);
@@ -231,8 +243,6 @@ namespace Fishing
             Controls.Add(pnlShop);
 
             // Панель журналу на місці ігрової
-            pnlJournal.Location = pnlGame.Location;
-            pnlJournal.Size = pnlGame.Size;
             pnlJournal.BackColor = Color.FromArgb(250, 244, 228);
             pnlJournal.Visible = false;
             EnableDoubleBuffering(pnlJournal);
@@ -242,9 +252,6 @@ namespace Fishing
 
             // Кнопка «Меню» вгорі праворуч, видна лише на ігровому екрані
             btnMenu.Text = "Меню (Esc)";
-            btnMenu.Size = new Size((int)(150 * DpiScale), (int)(34 * DpiScale));
-            btnMenu.Location = new Point(ClientSize.Width - btnMenu.Width - (int)(10 * DpiScale), (int)(8 * DpiScale));
-            btnMenu.Anchor = AnchorStyles.Top | AnchorStyles.Right;
             btnMenu.TabStop = false;
             btnMenu.Visible = false;
             btnMenu.Click += (s, e) => ReturnToMenu();
@@ -252,6 +259,15 @@ namespace Fishing
             Controls.Add(btnMenu);
             btnMenu.BringToFront(); // кнопка поверх гри і журналу
             btnExit.Click += (s, e) => Close();
+
+            // Кнопка «На весь екран» — завжди видна, праворуч від «Меню»
+            btnFullscreen.Text = "";
+            btnFullscreen.TabStop = false;
+            btnFullscreen.Click += (s, e) => ToggleFullscreen();
+            MakePixelButton(btnFullscreen, IconFullscreen);
+            Controls.Add(btnFullscreen);
+            btnFullscreen.BringToFront();
+            fullscreenTip.SetToolTip(btnFullscreen, "На весь екран (F11)");
 
             floatPos = FloatRest;
             floatTarget = FloatRest;
@@ -278,6 +294,122 @@ namespace Fishing
 
             // Звільняємо таймери і ресурси малювання при закритті вікна
             FormClosed += (s, e) => DisposeGameResources();
+
+            // Розміри й місця панелей і кнопок — під режим вікна; перераховуються при розгортанні
+            Resize += (s, e) => LayoutWindow();
+            LayoutWindow();
+        }
+
+        private float WindowedScale()
+        {
+            // Масштаб звичайного вікна: від масштабу екрана вгору до кратного 0,5 (125% → 1,5),
+            // але так, щоб вікно вміщалося на екрані
+            float scale = Math.Max(1f, (float)Math.Ceiling(DpiScale * 2 - 0.01f) / 2);
+            Rectangle area = Screen.FromRectangle(Bounds).WorkingArea; // без створення вікна заздалегідь
+            int frameWidth = Width - ClientSize.Width, frameHeight = Height - ClientSize.Height;
+            while (scale > 0.5f && (FieldWidth * scale + frameWidth > area.Width
+                || (FieldHeight + TopBarHeight) * scale + frameHeight > area.Height))
+            {
+                scale -= 0.5f;
+            }
+            return scale;
+        }
+
+        private void ToggleFullscreen()
+        {
+            // Весь екран: вікно без рамки поверх панелі задач; повторне натискання повертає звичайне вікно
+            isFullscreen = !isFullscreen;
+            layingOut = true; // поки міняється рамка, проміжні розміри не перераховуємо
+            try
+            {
+                if (isFullscreen)
+                {
+                    FormBorderStyle = FormBorderStyle.None;
+                    WindowState = FormWindowState.Maximized;
+                }
+                else
+                {
+                    WindowState = FormWindowState.Normal;
+                    FormBorderStyle = FormBorderStyle.FixedSingle;
+                }
+            }
+            finally
+            {
+                layingOut = false;
+            }
+            pixelButtonIcons[btnFullscreen] = isFullscreen ? IconWindowed : IconFullscreen;
+            fullscreenTip.SetToolTip(btnFullscreen, isFullscreen ? "У вікно (F11)" : "На весь екран (F11)");
+            LayoutWindow();
+            ActiveControl = null;
+        }
+
+        private void LayoutWindow()
+        {
+            if (layingOut || WindowState == FormWindowState.Minimized || ClientSize.Width <= 0 || ClientSize.Height <= 0)
+            {
+                return;
+            }
+            layingOut = true;
+            try
+            {
+                if (isFullscreen)
+                {
+                    // На весь екран: поле якомога більше, з тими ж пропорціями; збоку чи знизу — темні смуги
+                    float fit = Math.Min(ClientSize.Width / (float)FieldWidth, ClientSize.Height / (float)(FieldHeight + TopBarHeight));
+                    uiScale = Math.Max(1f, (float)Math.Floor(fit * 0.85f * 2) / 2);
+                    viewScale = Math.Min(ClientSize.Width / (float)FieldWidth, (ClientSize.Height - TopBarHeight * uiScale) / FieldHeight);
+                }
+                else
+                {
+                    viewScale = WindowedScale();
+                    uiScale = viewScale;
+                    var size = new Size((int)Math.Round(FieldWidth * viewScale), (int)Math.Round((FieldHeight + TopBarHeight) * viewScale));
+                    if (ClientSize != size)
+                    {
+                        ClientSize = size;
+                    }
+                }
+
+                panelTextFactor = uiScale / viewScale;
+                textFactor = panelTextFactor;
+
+                int fieldWidth = (int)Math.Round(FieldWidth * viewScale);
+                int fieldHeight = (int)Math.Round(FieldHeight * viewScale);
+                var field = new Rectangle((ClientSize.Width - fieldWidth) / 2, (int)Math.Round(TopBarHeight * uiScale), fieldWidth, fieldHeight);
+                foreach (Panel panel in new[] { pnlMenu, pnlGame, pnlShop, pnlJournal })
+                {
+                    panel.Bounds = field;
+                    panel.Invalidate();
+                }
+                LayoutMenu();
+
+                // Монетка цілим масштабом (без розмиття), посередині верхньої панелі
+                int coinScale = Math.Max(2, (int)Math.Round(26 * uiScale / 12f));
+                if (!coinImages.TryGetValue(coinScale, out Image coin))
+                {
+                    coin = MakePixelBitmap(CoinSprite, coinScale);
+                    coinImages[coinScale] = coin;
+                    loadedImages.Add(coin);
+                }
+                pbCoin.Image = coin;
+                coinImage = coin;
+                pbCoin.Size = coin.Size;
+                pbCoin.Location = new Point((int)Math.Round(12 * uiScale), (int)Math.Round(TopBarHeight * uiScale / 2 - coin.Height / 2f));
+
+                // Вгорі праворуч: «На весь екран», ліворуч від неї «Меню»
+                btnFullscreen.Size = new Size((int)(38 * uiScale), (int)(34 * uiScale));
+                btnFullscreen.Location = new Point(ClientSize.Width - btnFullscreen.Width - (int)(10 * uiScale), (int)(8 * uiScale));
+                btnFullscreen.Invalidate();
+                btnMenu.Size = new Size((int)(150 * uiScale), (int)(34 * uiScale));
+                btnMenu.Location = new Point(btnFullscreen.Left - btnMenu.Width - (int)(6 * uiScale), (int)(8 * uiScale));
+                btnMenu.Invalidate();
+
+                Invalidate(); // верхня панель і смуги навколо поля
+            }
+            finally
+            {
+                layingOut = false;
+            }
         }
 
         private void LoadProgress()
@@ -306,6 +438,8 @@ namespace Fishing
         private static readonly string[] IconShop = new[] { "....kkkk....", "...kppppk...", "....kddk....", "...kppppk...", "..kppppppk..", ".kpppooppqk.", "kpppoyyopqqk", "kpppoyyoqqqk", "kppppooqqqqk", ".kppppqqqqk.", "..kkkkkkkk.." };
         private static readonly string[] IconNewgame = new[] { "..kk....kk..", ".kggk..kggk.", ".kgggkkgggk.", "..kggggggk..", "...kkeekk...", "...kkeekk...", "..kddddddk..", "..kdaaaadk..", "...kddddk...", "....kkkk...." };
         private static readonly string[] IconExit = new[] { ".kkkkkk.....", "kddddddk....", "kdaaaadkk...", "kdaaaadkwk..", "kdaaaakkwwk.", "kdayaawwwwwk", "kdaaaakkwwk.", "kdaaaadkwk..", "kdaaaadkk...", "kddddddk....", ".kkkkkk....." };
+        private static readonly string[] IconFullscreen = new[] { "kkkkk..kkkkk", "kwwwk..kwwwk", "kwkkk..kkkwk", "kwk......kwk", "kkk......kkk", "............", "............", "kkk......kkk", "kwk......kwk", "kwkkk..kkkwk", "kwwwk..kwwwk", "kkkkk..kkkkk" };
+        private static readonly string[] IconWindowed = new[] { "..kwk..kwk..", "..kwk..kwk..", "kkkwk..kwkkk", "kwwwk..kwwwk", "kkkkk..kkkkk", "............", "............", "kkkkk..kkkkk", "kwwwk..kwwwk", "kkkwk..kwkkk", "..kwk..kwk..", "..kwk..kwk.." };
         private static readonly string[] IconMenu = new[] { "..kkkkkkkk..", ".kwwwwwwwwk.", "..kkkkkkkk..", ".kwwwwwwwwk.", "..kkkkkkkk..", ".kwwwwwwwwk.", "..kkkkkkkk.." };
         private static readonly string[] CoinSprite = new[] { "...kkkkk....", "..kyyyyyk...", ".kyywwyyyk..", "kyywyyyyyok.", "kyywyyyyyok.", "kyyyyyyyyok.", "kyyyyyyyyok.", "kyyyyyyyook.", ".kyyyyyook..", "..kooooook..", "...kkkkk....", "............" };
 
@@ -367,11 +501,12 @@ namespace Fishing
         {
             var button = (Button)sender;
             Graphics g = e.Graphics;
-            g.ScaleTransform(DpiScale, DpiScale);
+            textFactor = 1f; // кнопки вже в масштабі UiScale
+            g.ScaleTransform(UiScale, UiScale);
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-            float aw = (float)Math.Floor(button.ClientSize.Width / DpiScale / Px);
-            float ah = (float)Math.Floor(button.ClientSize.Height / DpiScale / Px);
+            float aw = (float)Math.Floor(button.ClientSize.Width / UiScale / Px);
+            float ah = (float)Math.Floor(button.ClientSize.Height / UiScale / Px);
             bool hover = hoveredButton == button;
             float press = pressedButton == button ? 1 : 0;
 
@@ -383,33 +518,38 @@ namespace Fishing
             // Значок у тій самій піксельній сітці, що й решта гри: 1 піксель значка = 1 арт-піксель
             float iconSize = icon[0].Length;
             float iconHeight = icon.Length;
-            Font font = button == btnMenu ? shopButtonFont : menuButtonFont;
-            SizeF text = g.MeasureString(button.Text, font);
-            float textArt = text.Width / Px;
-            float content = iconSize + 4 + textArt;
+            bool hasText = !string.IsNullOrEmpty(button.Text);
+            float content = hasText ? iconSize + 4 + MeasurePixelString(button.Text, TextBody).Width / Px : iconSize;
             float left = (float)Math.Round((aw - 1 - content) / 2);
             float iconTop = (float)Math.Round(press + (ah - 2 - iconHeight) / 2);
             PixelSpriteScaled(g, icon, ButtonIconColors, left, iconTop, 1);
 
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            g.DrawString(button.Text, font, Cream, (left + iconSize + 4) * Px, (press + (ah - 2) / 2) * Px - text.Height / 2);
+            if (hasText)
+            {
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                DrawPixelString(g, button.Text, TextBody, Cream, (left + iconSize + 4) * Px, (press + (ah - 2) / 2) * Px - TextCenter(TextBody));
+            }
+            textFactor = panelTextFactor;
         }
 
         private void LayoutMenu()
         {
-            // Кнопки меню стовпчиком по центру, під вивіскою; розміри — від розміру панелі
-            float scale = pnlMenu.ClientSize.Width / 800f;
-            if (scale <= 0)
+            // Кнопки меню стовпчиком по центру, під вивіскою. Розмір кнопок — від UiScale,
+            // а середина стовпчика стоїть там само, де у вікні (від масштабу поля)
+            float scale = UiScale;
+            if (pnlMenu.ClientSize.Width <= 0)
             {
                 return;
             }
             Button[] buttons = { btnPlay, btnJournal, btnShop, btnNewGame, btnExit };
             int width = (int)(232 * scale), height = (int)(44 * scale), gap = (int)(8 * scale);
-            int top = (int)(122 * scale);
+            const float stack = 5 * 44 + 4 * 8; // висота стовпчика в логічних пікселях
+            int top = (int)((122 + stack / 2) * ViewScale - stack / 2 * scale);
             for (int i = 0; i < buttons.Length; i++)
             {
                 buttons[i].Size = new Size(width, height);
                 buttons[i].Location = new Point((pnlMenu.ClientSize.Width - width) / 2, top + i * (height + gap));
+                buttons[i].Invalidate();
             }
         }
 
@@ -422,28 +562,32 @@ namespace Fishing
                 e.Graphics.DrawImageUnscaled(background, 0, 0);
             }
             Graphics g = e.Graphics;
-            g.ScaleTransform(DpiScale, DpiScale);
+            g.ScaleTransform(ViewScale, ViewScale);
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-            float aw = (float)Math.Floor(pnlMenu.ClientSize.Width / DpiScale / Px);
+            float aw = (float)Math.Floor(pnlMenu.ClientSize.Width / ViewScale / Px);
             float signX = (float)Math.Round(aw / 2 - 70);
             PixelRect(g, Nail, signX + 14, 0, 1, 8);
             PixelRect(g, Nail, signX + 125, 0, 1, 8);
             DrawPixelPanel(g, ArtRect(signX, 8, 140, 44), PlankLight, Ink, Wood, PlankShade);
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            g.DrawString("Fishing", menuTitleFont, Cream, ArtRect(signX, 8, 140, 32), centerFormat);
-            g.DrawString("зимова рибалка", shopTextFont, Cream, ArtRect(signX, 36, 140, 12), centerFormat);
+            DrawPixelString(g, "Fishing", TextTitle, Cream, ArtRect(signX, 8, 140, 32));
+            DrawPixelString(g, "зимова рибалка", TextBody, Cream, ArtRect(signX, 36, 140, 12));
         }
 
         private void Form1_Paint(object sender, PaintEventArgs e)
         {
             // Верхня панель з монетами — дерев'яна, як і решта інтерфейсу
             Graphics g = e.Graphics;
-            g.ScaleTransform(DpiScale, DpiScale);
+            textFactor = 1f; // верхня панель уже в масштабі UiScale
+            g.ScaleTransform(UiScale, UiScale);
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
-            float width = ClientSize.Width / DpiScale, height = pnlGame.Top / DpiScale;
+            float width = ClientSize.Width / UiScale, height = pnlGame.Top / UiScale;
             DrawPlankWall(g, width, height);
             PixelRect(g, Ink, 0, (float)Math.Floor(height / Px) - 1, (float)Math.Ceiling(width / Px), 1);
+            float coinCenter = (pbCoin.Top + pbCoin.Height / 2f) / UiScale;
+            DrawPixelString(g, lblScore.Text, TextTitle, Cream, pbCoin.Right / UiScale + 6, coinCenter - TextCenter(TextTitle));
+            textFactor = panelTextFactor;
         }
 
         private void StartNewGame()
@@ -481,22 +625,17 @@ namespace Fishing
             tmrMessage.Dispose();
             rodPen.Dispose();
             linePen.Dispose();
-            alertFont.Dispose();
-            statusFont.Dispose();
-            resultTitleFont.Dispose();
-            resultTextFont.Dispose();
-            resultHintFont.Dispose();
-            shopNameFont.Dispose();
-            shopTextFont.Dispose();
-            shopButtonFont.Dispose();
-            shopTitleFont.Dispose();
-            menuTitleFont.Dispose();
-            menuButtonFont.Dispose();
-            upgradeNameFont.Dispose();
-            upgradeDescFont.Dispose();
             overlayBrush.Dispose();
-            centerFormat.Dispose();
+            foreach (var item in pixelTextCache.Values)
+            {
+                item.Image.Dispose();
+            }
+            foreach (Font font in fallbackFonts.Values)
+            {
+                font.Dispose();
+            }
             rightFormat.Dispose();
+            fullscreenTip.Dispose();
             backgroundCache?.Dispose();
             foreach (Image image in loadedImages)
             {
@@ -708,6 +847,7 @@ namespace Fishing
         private void UpdateCoinsLabel()
         {
             lblScore.Text = $"Монети: {player.Money}";
+            Invalidate(new Rectangle(0, 0, ClientSize.Width, pnlGame.Top)); // перемалювати верхню панель
         }
 
         private void PnlGame_MouseDown(object sender, MouseEventArgs e)
@@ -737,7 +877,12 @@ namespace Fishing
 
         private void Form1_KeyDown(object sender, KeyEventArgs e)
         {
-            if (e.KeyCode == Keys.Escape && (pnlGame.Visible || pnlJournal.Visible || pnlShop.Visible))
+            if (e.KeyCode == Keys.F11)
+            {
+                e.Handled = true;
+                ToggleFullscreen();
+            }
+            else if (e.KeyCode == Keys.Escape && (pnlGame.Visible || pnlJournal.Visible || pnlShop.Visible))
             {
                 e.Handled = true;
                 ReturnToMenu();
@@ -1113,7 +1258,7 @@ namespace Fishing
             }
 
             // Масштаб під DPI і згладжування ліній та тексту
-            e.Graphics.ScaleTransform(DpiScale, DpiScale);
+            e.Graphics.ScaleTransform(ViewScale, ViewScale);
             e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
 
@@ -1146,7 +1291,7 @@ namespace Fishing
             // Повідомлення про результат — на темній підкладці, щоб читалось на будь-якому фоні
             if (!string.IsNullOrEmpty(statusText))
             {
-                DrawTextPanel(e.Graphics, statusText, statusFont, new PointF(16, 14), false);
+                DrawTextPanel(e.Graphics, statusText, TextBody, new PointF(16, 14), false);
             }
 
             // Підказки для новачка — поки не спіймано жодної риби
@@ -1160,13 +1305,13 @@ namespace Fishing
                     : "Затисни ЛКМ або пробіл, щоб зарядити закид";
                 if (hint != null)
                 {
-                    SizeF size = e.Graphics.MeasureString(hint, shopButtonFont);
-                    DrawTextPanel(e.Graphics, hint, shopButtonFont, new PointF((LogicalWidth - size.Width - 16) / 2, 52), false);
+                    SizeF size = MeasurePixelString(hint, TextBody);
+                    DrawTextPanel(e.Graphics, hint, TextBody, new PointF((LogicalWidth - size.Width - 16) / 2, 52), false);
                 }
             }
 
             // Назва поточної локації у правому верхньому куті поля
-            DrawTextPanel(e.Graphics, Catalog.GetLocation(player.CurrentLocationId).Name, shopNameFont,
+            DrawTextPanel(e.Graphics, Catalog.GetLocation(player.CurrentLocationId).Name, TextBody,
                 new PointF(LogicalWidth - 16, 14), true);
 
             // Екран результату поверх гри
@@ -1302,10 +1447,195 @@ namespace Fishing
             }
         }
 
-        private void DrawTextPanel(Graphics g, string text, Font font, PointF anchor, bool alignRight)
+        private static StringFormat CreatePixelFormat()
+        {
+            var format = (StringFormat)StringFormat.GenericTypographic.Clone();
+            format.FormatFlags |= StringFormatFlags.MeasureTrailingSpaces | StringFormatFlags.NoWrap;
+            return format;
+        }
+
+        private static void LoadPixelFont()
+        {
+            try
+            {
+                using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("Fishing.Assets.Fonts.Tiny5-Regular.ttf"))
+                {
+                    if (stream == null)
+                    {
+                        return;
+                    }
+                    byte[] data = new byte[stream.Length];
+                    int read = 0;
+                    while (read < data.Length)
+                    {
+                        int count = stream.Read(data, read, data.Length - read);
+                        if (count <= 0)
+                        {
+                            break;
+                        }
+                        read += count;
+                    }
+                    // Пам'ять зі шрифтом живе до кінця роботи гри: GDI+ читає гліфи саме звідси
+                    pixelFontMemory = Marshal.AllocCoTaskMem(data.Length);
+                    Marshal.Copy(data, 0, pixelFontMemory, data.Length);
+                    pixelFontCollection = new PrivateFontCollection();
+                    pixelFontCollection.AddMemoryFont(pixelFontMemory, data.Length);
+                    pixelFont = new Font(pixelFontCollection.Families[0], 8f, FontStyle.Regular, GraphicsUnit.Pixel);
+                }
+            }
+            catch (Exception)
+            {
+                pixelFont = null; // без шрифту гра не падає, а пише запасним шрифтом
+            }
+        }
+
+        private Font FallbackFont(float scale)
+        {
+            int key = (int)Math.Round(scale * 100);
+            if (!fallbackFonts.TryGetValue(key, out Font font))
+            {
+                font = new Font("Segoe UI", 4.5f * scale, FontStyle.Bold, GraphicsUnit.Pixel);
+                fallbackFonts[key] = font;
+            }
+            return font;
+        }
+
+        // Розмір пікселя шрифту в логічних пікселях з урахуванням зменшення тексту на весь екран
+        private float TextScale(int scale) => scale * textFactor;
+
+        // Від верху рядка до середини великої літери
+        private float TextCenter(int scale) => PixelTextCenter * TextScale(scale);
+
+        private (Bitmap Image, int Width) PixelTextImage(string text, Color color)
+        {
+            string key = color.ToArgb() + "|" + text;
+            if (pixelTextCache.TryGetValue(key, out var cached))
+            {
+                return cached;
+            }
+            if (pixelTextCache.Count > 300)
+            {
+                foreach (var item in pixelTextCache.Values)
+                {
+                    item.Image.Dispose();
+                }
+                pixelTextCache.Clear();
+            }
+
+            int width;
+            using (var probe = new Bitmap(1, 1))
+            using (Graphics measure = Graphics.FromImage(probe))
+            {
+                measure.TextRenderingHint = TextRenderingHint.SingleBitPerPixel;
+                width = (int)Math.Ceiling(measure.MeasureString(text, pixelFont, int.MaxValue, pixelFormat).Width);
+            }
+            var image = new Bitmap(Math.Max(1, width + 1), PixelLineStep, PixelFormat.Format32bppArgb);
+            using (Graphics g = Graphics.FromImage(image))
+            using (var brush = new SolidBrush(color))
+            {
+                // Без згладжування: кожен піксель шрифту або зафарбований, або ні
+                g.TextRenderingHint = TextRenderingHint.SingleBitPerPixel;
+                g.DrawString(text, pixelFont, brush, 0, 0, pixelFormat);
+            }
+            var entry = (image, width);
+            pixelTextCache[key] = entry;
+            return entry;
+        }
+
+        private SizeF MeasurePixelString(string text, int scale)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return SizeF.Empty;
+            }
+            if (pixelFont == null)
+            {
+                using (var probe = new Bitmap(1, 1))
+                using (Graphics measure = Graphics.FromImage(probe))
+                {
+                    SizeF size = measure.MeasureString(text, FallbackFont(TextScale(scale)));
+                    return new SizeF(size.Width, 9 * TextScale(scale));
+                }
+            }
+            return new SizeF(PixelTextImage(text, Color.White).Width * TextScale(scale), 9 * TextScale(scale));
+        }
+
+        private void DrawPixelString(Graphics g, string text, int scale, Brush brush, float x, float y)
+        {
+            // (x, y) — лівий верхній кут рядка в логічних пікселях
+            if (string.IsNullOrEmpty(text))
+            {
+                return;
+            }
+            Color color = brush is SolidBrush solid ? solid.Color : Color.White;
+            if (pixelFont == null)
+            {
+                var hint = g.TextRenderingHint;
+                g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+                g.DrawString(text, FallbackFont(TextScale(scale)), brush, x, y);
+                g.TextRenderingHint = hint;
+                return;
+            }
+            var entry = PixelTextImage(text, color);
+            // Прив'язка до арт-пікселів, щоб літери лягали на ту саму сітку, що й фони
+            float left = (float)Math.Round(x / Px) * Px;
+            float top = (float)Math.Round(y / Px) * Px;
+            var interpolation = g.InterpolationMode;
+            var offset = g.PixelOffsetMode;
+            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor;
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+            g.DrawImage(entry.Image, new RectangleF(left, top, entry.Image.Width * TextScale(scale), entry.Image.Height * TextScale(scale)));
+            g.InterpolationMode = interpolation;
+            g.PixelOffsetMode = offset;
+        }
+
+        private void DrawPixelString(Graphics g, string text, int scale, Brush brush, RectangleF rect, bool wrap = false)
+        {
+            // Текст по центру прямокутника; з wrap довгий текст переноситься по словах
+            if (string.IsNullOrEmpty(text))
+            {
+                return;
+            }
+            List<string> lines = wrap ? WrapPixelText(text, scale, rect.Width - 4 * Px) : new List<string> { text };
+            float step = PixelLineStep * TextScale(scale);
+            float firstCenter = rect.Y + rect.Height / 2 - (lines.Count - 1) * step / 2;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                float width = MeasurePixelString(lines[i], scale).Width;
+                float x = rect.X + (rect.Width - width) / 2;
+                float y = firstCenter + i * step - TextCenter(scale);
+                DrawPixelString(g, lines[i], scale, brush, x, y);
+            }
+        }
+
+        private List<string> WrapPixelText(string text, int scale, float maxWidth)
+        {
+            var lines = new List<string>();
+            string current = "";
+            foreach (string word in text.Split(' '))
+            {
+                string candidate = current.Length == 0 ? word : current + " " + word;
+                if (current.Length > 0 && MeasurePixelString(candidate, scale).Width > maxWidth)
+                {
+                    lines.Add(current);
+                    current = word;
+                }
+                else
+                {
+                    current = candidate;
+                }
+            }
+            if (current.Length > 0)
+            {
+                lines.Add(current);
+            }
+            return lines;
+        }
+
+        private void DrawTextPanel(Graphics g, string text, int scale, PointF anchor, bool alignRight)
         {
             // Текст на темній піксельній підкладці: читається і вдень, і вночі
-            SizeF size = g.MeasureString(text, font);
+            SizeF size = MeasurePixelString(text, scale);
             float width = (float)Math.Ceiling((size.Width + 16) / Px) * Px;
             float height = (float)Math.Ceiling((size.Height + 6) / Px) * Px;
             float x = alignRight ? anchor.X - width : anchor.X;
@@ -1314,7 +1644,7 @@ namespace Fishing
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
             DrawPixelPanel(g, rect, PanelFill, PanelEdge, null, null);
             g.SmoothingMode = previous;
-            g.DrawString(text, font, Brushes.White, rect.X + 8, rect.Y + 3);
+            DrawPixelString(g, text, scale, Brushes.White, rect);
         }
 
         // Безінерційна котушка збоку від вудлища: l — волосінь на шпулі, M — шпуля, m — корпус, o — кнопка ручки
@@ -1628,8 +1958,8 @@ namespace Fishing
             Color rarityColor = RarityColor(lastCatch.Fish.Rarity);
 
             // Заголовок
-            g.DrawString("Зловлено!", resultTitleFont, Brushes.Black,
-                new RectangleF(cardLeft, cardTop + 10, cardWidth, 36), centerFormat);
+            DrawPixelString(g, "Зловлено!", TextTitle, Brushes.Black,
+                new RectangleF(cardLeft, cardTop + 10, cardWidth, 36));
 
             // Спрайт спійманої риби
             float fishX = cardLeft + cardWidth / 2;
@@ -1639,15 +1969,15 @@ namespace Fishing
             // Назва, рідкість, вага, ціна
             using (var rarityBrush = new SolidBrush(rarityColor))
             {
-                g.DrawString(lastCatch.Fish.Name, resultTitleFont, rarityBrush,
-                    new RectangleF(cardLeft, cardTop + 98, cardWidth, 34), centerFormat);
-                g.DrawString(RarityName(lastCatch.Fish.Rarity), resultTextFont, rarityBrush,
-                    new RectangleF(cardLeft, cardTop + 130, cardWidth, 24), centerFormat);
+                DrawPixelString(g, lastCatch.Fish.Name, TextTitle, rarityBrush,
+                    new RectangleF(cardLeft, cardTop + 98, cardWidth, 34));
+                DrawPixelString(g, RarityName(lastCatch.Fish.Rarity), TextBody, rarityBrush,
+                    new RectangleF(cardLeft, cardTop + 130, cardWidth, 24));
             }
-            g.DrawString($"Вага: {FormatWeight(lastCatch.Weight)}", resultTextFont, Brushes.Black,
-                new RectangleF(cardLeft, cardTop + 156, cardWidth, 24), centerFormat);
-            g.DrawString($"Ціна: {lastCatch.Price} {CoinsWord(lastCatch.Price)}", resultTextFont, Brushes.Black,
-                new RectangleF(cardLeft, cardTop + 182, cardWidth, 24), centerFormat);
+            DrawPixelString(g, $"Вага: {FormatWeight(lastCatch.Weight)}", TextBody, Brushes.Black,
+                new RectangleF(cardLeft, cardTop + 156, cardWidth, 24));
+            DrawPixelString(g, $"Ціна: {lastCatch.Price} {CoinsWord(lastCatch.Price)}", TextBody, Brushes.Black,
+                new RectangleF(cardLeft, cardTop + 182, cardWidth, 24));
 
             // Позначка нового виду в правому верхньому куті картки
             if (lastCatch.IsNewSpecies)
@@ -1657,7 +1987,7 @@ namespace Fishing
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
                 DrawPixelPanel(g, badge, Gold, WoodDark, FloatWhite, GoldDark);
                 g.SmoothingMode = previousBadge;
-                g.DrawString("Новий вид!", statusFont, Brushes.Black, badge, centerFormat);
+                DrawPixelString(g, "Новий вид!", TextBody, Brushes.Black, badge);
             }
 
             // Позначка рекорду в лівому верхньому куті картки
@@ -1668,12 +1998,12 @@ namespace Fishing
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
                 DrawPixelPanel(g, recordBadge, Zone, WoodDark, ZoneLight, ZoneDark);
                 g.SmoothingMode = previousRecord;
-                g.DrawString("Новий рекорд!", statusFont, Brushes.White, recordBadge, centerFormat);
+                DrawPixelString(g, "Новий рекорд!", TextBody, Brushes.White, recordBadge);
             }
 
             // Підказка
-            g.DrawString("ЛКМ або пробіл — продовжити", resultHintFont, Brushes.DimGray,
-                new RectangleF(cardLeft, cardTop + cardHeight - 30, cardWidth, 22), centerFormat);
+            DrawPixelString(g, "ЛКМ або пробіл — продовжити", TextBody, Brushes.DimGray,
+                new RectangleF(cardLeft, cardTop + cardHeight - 30, cardWidth, 22));
         }
 
         private static void DrawFishShape(Graphics g, float centerX, float centerY, float scale, Color color, bool withEye)
@@ -1697,7 +2027,7 @@ namespace Fishing
 
         private void PnlJournal_MouseClick(object sender, MouseEventArgs e)
         {
-            var point = new PointF(e.X / DpiScale, e.Y / DpiScale);
+            var point = new PointF(e.X / ViewScale, e.Y / ViewScale);
             foreach (var tab in journalTabs)
             {
                 if (tab.Rect.Contains(point))
@@ -1716,12 +2046,12 @@ namespace Fishing
         {
             // Журнал (статистика улову) у тому ж стилі, що й крамниця: стіна з дощок, вивіска, картки-пергаменти
             Graphics g = e.Graphics;
-            g.ScaleTransform(DpiScale, DpiScale);
+            g.ScaleTransform(ViewScale, ViewScale);
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
 
-            float width = pnlJournal.ClientSize.Width / DpiScale;
-            float height = pnlJournal.ClientSize.Height / DpiScale;
+            float width = pnlJournal.ClientSize.Width / ViewScale;
+            float height = pnlJournal.ClientSize.Height / ViewScale;
             float aw = (float)Math.Floor(width / Px);
             DrawPlankWall(g, width, height);
 
@@ -1730,8 +2060,8 @@ namespace Fishing
             PixelRect(g, Nail, signX + 10, 0, 1, 3);
             PixelRect(g, Nail, signX + 99, 0, 1, 3);
             DrawPixelPanel(g, ArtRect(signX, 3, 110, 16), PlankLight, Ink, Wood, PlankShade);
-            g.DrawString("Журнал риб", shopTitleFont, Cream, ArtRect(signX, 3, 110, 16), centerFormat);
-            g.DrawString(JournalService.GetProgressText(player), shopTextFont, Cream, new RectangleF(0, 20 * Px, width, 18), centerFormat);
+            DrawPixelString(g, "Журнал риб", TextTitle, Cream, ArtRect(signX, 3, 110, 16));
+            DrawPixelString(g, JournalService.GetProgressText(player), TextBody, Cream, new RectangleF(0, 20 * Px, width, 18));
 
             // Вкладки локацій — дерев'яні таблички, обрана — пергамент
             journalTabs.Clear();
@@ -1757,7 +2087,7 @@ namespace Fishing
                 }
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
                 string caption = unlocked ? $"{location.Name}  {found}/{location.Fishes.Count}" : $"{location.Name} (закрито)";
-                g.DrawString(caption, shopButtonFont, active ? (Brush)CardText : Cream, rect, centerFormat);
+                DrawPixelString(g, caption, TextBody, active ? (Brush)CardText : Cream, rect);
                 journalTabs.Add((rect, location.Id));
             }
 
@@ -1774,8 +2104,8 @@ namespace Fishing
             // Підказка для закритої локації
             if (!ShopService.IsLocationUnlocked(player, shown))
             {
-                g.DrawString($"Локацію «{shown.Name}» можна відкрити в магазині за {shown.Price} {CoinsWord(shown.Price)}",
-                    resultHintFont, Cream, new RectangleF(0, (cardsTop + cardH + 4) * Px, width, 22), centerFormat);
+                DrawPixelString(g, $"Локацію «{shown.Name}» можна відкрити в магазині за {shown.Price} {CoinsWord(shown.Price)}",
+                    TextBody, Cream, new RectangleF(0, (cardsTop + cardH + 4) * Px, width, 22), true);
             }
         }
 
@@ -1801,15 +2131,15 @@ namespace Fishing
                 PixelSprite(g, new[] { ".kkkkk.", "kwwwwwk", "kwkkkwk", "kwwwkwk", "kwwkwwk", "kwwwwwk", "kwwkwwk", ".kkkkk." },
                     AlertColors, ax + aw - 12, ay + 4);
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                g.DrawString(entry.DisplayName, resultTitleFont, CardSubText, ArtRect(ax, ay + 42, aw, 16), centerFormat);
-                g.DrawString("Ще не спіймано", resultHintFont, CardSubText, ArtRect(ax, ay + 62, aw, 10), centerFormat);
+                DrawPixelString(g, entry.DisplayName, TextTitle, CardSubText, ArtRect(ax, ay + 42, aw, 16));
+                DrawPixelString(g, "Ще не спіймано", TextBody, CardSubText, ArtRect(ax, ay + 62, aw, 10));
                 return;
             }
 
             using (var rarityBrush = new SolidBrush(RarityColor(fish.Rarity)))
             {
-                g.DrawString(fish.Name, shopNameFont, rarityBrush, ArtRect(ax, ay + 40, aw, 12), centerFormat);
-                g.DrawString(RarityName(fish.Rarity), upgradeDescFont, rarityBrush, ArtRect(ax, ay + 52, aw, 8), centerFormat);
+                DrawPixelString(g, fish.Name, TextBody, rarityBrush, ArtRect(ax, ay + 40, aw, 12));
+                DrawPixelString(g, RarityName(fish.Rarity), TextBody, rarityBrush, ArtRect(ax, ay + 52, aw, 8));
             }
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
             PixelRect(g, StatLine, ax + 4, ay + 62, aw - 8, 1);
@@ -1817,9 +2147,9 @@ namespace Fishing
 
             int caught = catchCounts.TryGetValue(fish.Id, out int c) ? c : 0;
             double best = bestWeights.TryGetValue(fish.Id, out double w) ? w : 0;
-            g.DrawString($"Спіймано: {caught}", shopTextFont, CardText, ArtRect(ax, ay + 65, aw, 9), centerFormat);
-            g.DrawString($"Рекорд: {FormatWeight(best)}", shopTextFont, CardText, ArtRect(ax, ay + 75, aw, 9), centerFormat);
-            g.DrawString($"Ціна: від {fish.BasePrice}", shopTextFont, CardSubText, ArtRect(ax, ay + 85, aw, 9), centerFormat);
+            DrawPixelString(g, $"Спіймано: {caught}", TextBody, CardText, ArtRect(ax, ay + 65, aw, 9));
+            DrawPixelString(g, $"Рекорд: {FormatWeight(best)}", TextBody, CardText, ArtRect(ax, ay + 75, aw, 9));
+            DrawPixelString(g, $"Ціна: від {fish.BasePrice}", TextBody, CardSubText, ArtRect(ax, ay + 85, aw, 9));
         }
 
         private int UpgradePrice(Upgrade upgrade)
@@ -1878,7 +2208,7 @@ namespace Fishing
             }
 
             // Клік у пікселях екрана переводимо в логічні пікселі, в яких намальовано кнопки
-            var point = new PointF(e.X / DpiScale, e.Y / DpiScale);
+            var point = new PointF(e.X / ViewScale, e.Y / ViewScale);
             foreach (var button in shopButtons)
             {
                 if (button.Rect.Contains(point))
@@ -2012,7 +2342,7 @@ namespace Fishing
             DrawPixelPanel(g, rect, face, Ink, light, dark);
 
             // Монетка перед ціною або галочка для поточної локації
-            SizeF size = g.MeasureString(text, shopButtonFont);
+            SizeF size = MeasurePixelString(text, TextBody);
             float iconWidth = withCoin ? 7 * Px : style == ShopButtonStyle.Current ? 7 * Px : 0;
             float x = rect.X + (rect.Width - size.Width - iconWidth) / 2;
             float midY = rect.Y + rect.Height / 2;
@@ -2026,13 +2356,13 @@ namespace Fishing
                 PixelSprite(g, new[] { "....w", "w..w.", ".ww.." }, AlertColors, ax, ay + 1);
             }
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            g.DrawString(text, shopButtonFont, Brushes.White, x + iconWidth, midY - size.Height / 2);
+            DrawPixelString(g, text, TextBody, Brushes.White, x + iconWidth, midY - TextCenter(TextBody));
         }
 
         private void PnlShop_MouseMove(object sender, MouseEventArgs e)
         {
             // Підсвічуємо кнопку під курсором
-            var point = new PointF(e.X / DpiScale, e.Y / DpiScale);
+            var point = new PointF(e.X / ViewScale, e.Y / ViewScale);
             RectangleF? hovered = null;
             foreach (var button in shopButtons)
             {
@@ -2053,12 +2383,12 @@ namespace Fishing
         private void PnlShop_Paint(object sender, PaintEventArgs e)
         {
             Graphics g = e.Graphics;
-            g.ScaleTransform(DpiScale, DpiScale);
+            g.ScaleTransform(ViewScale, ViewScale);
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
 
-            float width = pnlShop.ClientSize.Width / DpiScale;
-            float height = pnlShop.ClientSize.Height / DpiScale;
+            float width = pnlShop.ClientSize.Width / ViewScale;
+            float height = pnlShop.ClientSize.Height / ViewScale;
             float aw = (float)Math.Floor(width / Px);
             shopButtons.Clear();
 
@@ -2069,14 +2399,14 @@ namespace Fishing
             PixelRect(g, Nail, signX + 10, 0, 1, 3);
             PixelRect(g, Nail, signX + 89, 0, 1, 3);
             DrawPixelPanel(g, ArtRect(signX, 3, 100, 16), PlankLight, Ink, Wood, PlankShade);
-            g.DrawString("Магазин", shopTitleFont, Cream, ArtRect(signX, 3, 100, 16), centerFormat);
+            DrawPixelString(g, "Магазин", TextTitle, Cream, ArtRect(signX, 3, 100, 16));
             if (!string.IsNullOrEmpty(shopMessage))
             {
-                g.DrawString(shopMessage, shopTextFont, Cream, new RectangleF(0, 21 * Px, width, 18), centerFormat);
+                DrawPixelString(g, shopMessage, TextBody, Cream, new RectangleF(0, 21 * Px, width, 18));
             }
 
             // --- Локації: 3 картки в ряд
-            g.DrawString("Локації", shopNameFont, Cream, 14 * Px, 21 * Px);
+            DrawPixelString(g, "Локації", TextBody, Cream, 14 * Px, 23 * Px);
             const float locW = 120, locH = 62, locGap = 7, locTop = 34;
             float locLeft = (float)Math.Round((aw - (3 * locW + 2 * locGap)) / 2);
             for (int i = 0; i < Catalog.Locations.Count; i++)
@@ -2085,7 +2415,7 @@ namespace Fishing
             }
 
             // --- Покращення: 5 карток у ряд
-            g.DrawString("Покращення", shopNameFont, Cream, 14 * Px, 99 * Px);
+            DrawPixelString(g, "Покращення", TextBody, Cream, 14 * Px, 101 * Px);
             const float upW = 70, upH = 82, upGap = 6, upTop = 112;
             float upLeft = (float)Math.Round((aw - (5 * upW + 4 * upGap)) / 2);
             for (int i = 0; i < UpgradeCatalog.All.Count; i++)
@@ -2132,7 +2462,7 @@ namespace Fishing
             PixelRect(g, WoodDark, ax + 3, ay + 31, aw - 6, 1);
 
             g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            g.DrawString(location.Name, shopNameFont, CardText, ArtRect(ax, ay + 32, aw, 13), centerFormat);
+            DrawPixelString(g, location.Name, TextBody, CardText, ArtRect(ax, ay + 32, aw, 13));
 
             RectangleF buttonRect = ArtRect(ax + 10, ay + ah - 15, aw - 20, 11);
             if (current)
@@ -2207,17 +2537,20 @@ namespace Fishing
             DrawPixelPanel(g, ArtRect(ax, ay, aw, ah), Parchment, WoodDark, FloatWhite, ParchmentDark);
             PixelSpriteScaled(g, UpgradeIcon(upgrade.Type), UpgradeIconColors, ax + aw / 2 - 10, ay + 4, 2);
 
+            // Довгий опис переноситься на другий рядок, тоді рівні опускаються нижче
+            bool twoLines = MeasurePixelString(upgrade.Description, TextBody).Width > (aw - 4) * Px;
+            float pipsTop = twoLines ? ay + 57 : ay + 47;
+
             // Рівень: заповнені комірки — куплені рівні
             float pipsLeft = ax + aw / 2 - (upgrade.MaxLevel * 11 - 2) / 2f;
             for (int i = 0; i < upgrade.MaxLevel; i++)
             {
-                PixelRect(g, Ink, pipsLeft + i * 11, ay + 47, 9, 3);
-                PixelRect(g, i < level ? (Brush)Zone : TrackDark, pipsLeft + i * 11 + 1, ay + 48, 7, 1);
+                PixelRect(g, Ink, pipsLeft + i * 11, pipsTop, 9, 3);
+                PixelRect(g, i < level ? (Brush)Zone : TrackDark, pipsLeft + i * 11 + 1, pipsTop + 1, 7, 1);
             }
 
-            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-            g.DrawString(upgrade.Name, upgradeNameFont, CardText, ArtRect(ax, ay + 26, aw, 9), centerFormat);
-            g.DrawString(upgrade.Description, upgradeDescFont, CardSubText, ArtRect(ax, ay + 35, aw, 9), centerFormat);
+            DrawPixelString(g, upgrade.Name, TextBody, CardText, ArtRect(ax, ay + 26, aw, 9));
+            DrawPixelString(g, upgrade.Description, TextBody, CardSubText, twoLines ? ArtRect(ax, ay + 35, aw, 20) : ArtRect(ax, ay + 35, aw, 9), twoLines);
 
             RectangleF buttonRect = ArtRect(ax + 5, ay + ah - 16, aw - 10, 11);
             if (maxed)
