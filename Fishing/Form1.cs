@@ -737,17 +737,6 @@ namespace Fishing
 
         private void Form1_KeyDown(object sender, KeyEventArgs e)
         {
-#if DEBUG
-            // Лише для тестування в Debug-збірці: F9 додає 500 монет (у Release цього коду немає)
-            if (e.KeyCode == Keys.F9)
-            {
-                e.Handled = true;
-                player.Money += 500;
-                UpdateCoinsLabel();
-                pnlShop.Invalidate();
-                return;
-            }
-#endif
             if (e.KeyCode == Keys.Escape && (pnlGame.Visible || pnlJournal.Visible || pnlShop.Visible))
             {
                 e.Handled = true;
@@ -1244,9 +1233,11 @@ namespace Fishing
         // ---------- Піксель-арт сцени (картка 27): 1 арт-піксель = 2 логічні пікселі, як у фонах 400x200
         private const float Px = 2f;
 
-        private static readonly SolidBrush RodDark = new SolidBrush(Color.FromArgb(79, 49, 37));
         private static readonly SolidBrush RodLight = new SolidBrush(Color.FromArgb(168, 112, 63));
         private static readonly SolidBrush Cork = new SolidBrush(Color.FromArgb(226, 200, 160));
+        private static readonly SolidBrush CorkDark = new SolidBrush(Color.FromArgb(176, 138, 98));
+        private static readonly SolidBrush RodBlank = new SolidBrush(Color.FromArgb(46, 52, 74));
+        private static readonly SolidBrush RodBlankLight = new SolidBrush(Color.FromArgb(116, 126, 160));
         private static readonly SolidBrush MetalDark = new SolidBrush(Color.FromArgb(84, 91, 107));
         private static readonly SolidBrush MetalLight = new SolidBrush(Color.FromArgb(167, 176, 189));
         private static readonly SolidBrush LineBrush = new SolidBrush(Color.FromArgb(190, 228, 234, 242));
@@ -1273,17 +1264,6 @@ namespace Fishing
         private static void PixelRect(Graphics g, Brush brush, float ax, float ay, float aw = 1, float ah = 1)
         {
             g.FillRectangle(brush, ax * Px, ay * Px, aw * Px, ah * Px);
-        }
-
-        private static void PixelLine(Graphics g, Brush brush, float x0, float y0, float x1, float y1)
-        {
-            // Лінія по сітці арт-пікселів: крок по довшій осі
-            int steps = (int)Math.Max(Math.Abs(x1 - x0), Math.Abs(y1 - y0));
-            for (int i = 0; i <= steps; i++)
-            {
-                float t = steps == 0 ? 0 : (float)i / steps;
-                PixelRect(g, brush, (float)Math.Round(x0 + (x1 - x0) * t), (float)Math.Round(y0 + (y1 - y0) * t));
-            }
         }
 
         private static void PixelSprite(Graphics g, string[] rows, Dictionary<char, Brush> colors, float ax, float ay)
@@ -1337,18 +1317,94 @@ namespace Fishing
             g.DrawString(text, font, Brushes.White, rect.X + 8, rect.Y + 3);
         }
 
+        // Безінерційна котушка збоку від вудлища: l — волосінь на шпулі, M — шпуля, m — корпус, o — кнопка ручки
+        private static readonly string[] ReelSprite =
+        {
+            "...lll....",
+            "..kMMMk...",
+            "..kMMMk...",
+            "..kmmmk...",
+            "ffkmmmkkk.",
+            "..kmmmk.ko",
+            "...kkk....",
+        };
+
+        private static readonly Dictionary<char, Brush> ReelColors = new Dictionary<char, Brush>
+        {
+            { 'l', LineBrush }, { 'M', MetalLight }, { 'm', MetalDark }, { 'k', Ink }, { 'f', MetalDark }, { 'o', FloatRed },
+        };
+
         private void DrawRod(Graphics g)
         {
-            // Вудлище з двох тонів, коркова ручка, котушка і підставка на помості
+            // Спінінг: тонкий бланк зі світлим кінчиком, кільця з боку води, рознесена коркова ручка
+            // з котушкотримачем і безінерційна котушка. Малюється рядок за рядком, тому без зубців
             float tipX = rodTip.X / Px, tipY = rodTip.Y / Px;
-            PixelRect(g, MetalDark, 13, 168, 6, 2);                 // підставка
-            PixelLine(g, RodDark, 15, 169, tipX - 1, tipY);
-            PixelLine(g, RodLight, 16, 169, tipX, tipY);
-            PixelRect(g, Cork, 13, 160, 2, 7);                      // корок
-            PixelRect(g, RodDark, 15, 160, 1, 7);
-            PixelRect(g, MetalDark, 17, 161, 3, 3);                 // котушка
-            PixelRect(g, MetalLight, 17, 161, 1, 1);
-            PixelRect(g, MetalLight, tipX, tipY - 1, 1, 1);          // кільце на кінчику
+            const float buttX = 13, buttY = 171;
+            int rows = (int)(buttY - tipY);
+            float RodX(float t) => (float)Math.Floor(tipX + (buttX - tipX) * t + 0.5f);
+            float RodY(float t) => tipY + (float)Math.Floor(rows * t + 0.5f);
+            for (int i = 0; i <= rows; i++)
+            {
+                float t = (float)i / rows;                 // 0 — кінчик, 1 — торець ручки
+                float x = RodX(t), y = tipY + i;
+                if (t < 0.40f)
+                {
+                    PixelRect(g, RodBlankLight, x, y);     // тонкий кінчик
+                }
+                else if (t < 0.70f)
+                {
+                    PixelRect(g, RodBlank, x, y);          // бланк з відблиском
+                    PixelRect(g, RodBlankLight, x - 1, y);
+                }
+                else if (t < 0.78f || (t >= 0.85f && t < 0.985f))
+                {
+                    PixelRect(g, CorkDark, x - 1, y);      // передня і задня коркові ручки
+                    PixelRect(g, Cork, x, y, 2, 1);
+                }
+                else if (t < 0.85f)
+                {
+                    PixelRect(g, MetalDark, x, y);         // котушкотримач
+                    PixelRect(g, MetalLight, x - 1, y);
+                }
+                else
+                {
+                    PixelRect(g, Ink, x - 1, y, 3, 1);     // заглушка
+                }
+            }
+            foreach (float t in new[] { 0.70f, 0.78f, 0.85f })
+            {
+                PixelRect(g, Gold, RodX(t) - 1, RodY(t), 3, 1); // обмотки
+            }
+
+            // Кільця з боку води; до кінчика менші
+            foreach (float t in new[] { 0.14f, 0.28f, 0.42f })
+            {
+                PixelRect(g, MetalDark, RodX(t) + 1, RodY(t));
+                PixelRect(g, MetalLight, RodX(t) + 2, RodY(t));
+            }
+            foreach (float t in new[] { 0.55f, 0.66f })
+            {
+                float x = RodX(t), y = RodY(t);
+                PixelRect(g, MetalDark, x + 1, y);
+                PixelRect(g, MetalLight, x + 2, y - 1);
+                PixelRect(g, MetalLight, x + 3, y);
+                PixelRect(g, MetalLight, x + 2, y + 1);
+            }
+
+            // Котушка висить на котушкотримачі; шпуля з волосінню дивиться на кінчик
+            float reelX = RodX(0.815f), reelY = RodY(0.815f);
+            PixelSprite(g, ReelSprite, ReelColors, reelX + 1, reelY - 4);
+            float lineX0 = reelX + 5, lineY0 = reelY - 4;
+            float lineX1 = RodX(0.66f) + 3, lineY1 = RodY(0.66f);
+            int steps = (int)Math.Max(Math.Abs(lineX1 - lineX0), Math.Abs(lineY1 - lineY0));
+            for (int k = 1; k < steps; k++)
+            {
+                float s = (float)k / steps;
+                PixelRect(g, LineBrush, (float)Math.Floor(lineX0 + (lineX1 - lineX0) * s + 0.5f), (float)Math.Floor(lineY0 + (lineY1 - lineY0) * s + 0.5f));
+            }
+
+            PixelRect(g, MetalLight, tipX, tipY - 1);      // тюльпан на кінчику
+            PixelRect(g, MetalDark, 9, 170, 9, 2);         // підставка на помості
         }
 
         private bool FloatOnWater => !isFlying && !isReeling && (tmrBite.Enabled || isBiting || isFighting);
