@@ -72,6 +72,8 @@ namespace Fishing
 
         // Екран журналу (створюється в коді, а не в дизайнері)
         private readonly Panel pnlJournal = new Panel();
+        private readonly Panel pnlDevs = new Panel();          // екран «Розробники» (картка 34)
+        private readonly Button btnDevs = new Button();
 
         // Стан гравця (модель бекенду Player): монети, поточна і відкриті локації, рівні покращень
         private readonly Player player = new Player { Money = 0, CurrentLocationId = 1 };
@@ -209,11 +211,17 @@ namespace Fishing
             btnNewGame.Click += (s, e) => StartNewGame();
             pnlMenu.Controls.Add(btnNewGame);
 
+            // Кнопка «Розробники»: екран з командою, між «Новою грою» і «Виходом»
+            btnDevs.Text = "Розробники";
+            btnDevs.Click += (s, e) => ShowPanel(pnlDevs);
+            pnlMenu.Controls.Add(btnDevs);
+
             // Головне меню і верхня панель у піксельному стилі
             MakePixelButton(btnPlay, IconPlay);
             MakePixelButton(btnJournal, IconJournal);
             MakePixelButton(btnShop, IconShop);
             MakePixelButton(btnNewGame, IconNewgame);
+            MakePixelButton(btnDevs, IconDevs);
             MakePixelButton(btnExit, IconExit);
             EnableDoubleBuffering(pnlMenu);
             pnlMenu.Paint += PnlMenu_Paint;
@@ -249,6 +257,12 @@ namespace Fishing
             pnlJournal.Paint += PnlJournal_Paint;
             pnlJournal.MouseClick += PnlJournal_MouseClick;
             Controls.Add(pnlJournal);
+
+            // Панель «Розробники» на місці ігрової
+            pnlDevs.Visible = false;
+            EnableDoubleBuffering(pnlDevs);
+            pnlDevs.Paint += PnlDevs_Paint;
+            Controls.Add(pnlDevs);
 
             // Кнопка «Меню» вгорі праворуч, видна лише на ігровому екрані
             btnMenu.Text = "Меню (Esc)";
@@ -376,7 +390,7 @@ namespace Fishing
                 int fieldWidth = (int)Math.Round(FieldWidth * viewScale);
                 int fieldHeight = (int)Math.Round(FieldHeight * viewScale);
                 var field = new Rectangle((ClientSize.Width - fieldWidth) / 2, (int)Math.Round(TopBarHeight * uiScale), fieldWidth, fieldHeight);
-                foreach (Panel panel in new[] { pnlMenu, pnlGame, pnlShop, pnlJournal })
+                foreach (Panel panel in new[] { pnlMenu, pnlGame, pnlShop, pnlJournal, pnlDevs })
                 {
                     panel.Bounds = field;
                     panel.Invalidate();
@@ -437,6 +451,15 @@ namespace Fishing
         private static readonly string[] IconJournal = new[] { ".kkkkkkkkkk.", "kntttttttttk", "kntttyyttttk", "knttyyyytytk", "kntykyyyyytk", "knttyyyytytk", "kntttyyttttk", "kntttttttttk", "knwwwwwwwwwk", "knnnnnnnnnnk", ".kkkkkkkkrk.", ".........k.." };
         private static readonly string[] IconShop = new[] { "....kkkk....", "...kppppk...", "....kddk....", "...kppppk...", "..kppppppk..", ".kpppooppqk.", "kpppoyyopqqk", "kpppoyyoqqqk", "kppppooqqqqk", ".kppppqqqqk.", "..kkkkkkkk.." };
         private static readonly string[] IconNewgame = new[] { "..kk....kk..", ".kggk..kggk.", ".kgggkkgggk.", "..kggggggk..", "...kkeekk...", "...kkeekk...", "..kddddddk..", "..kdaaaadk..", "...kddddk...", "....kkkk...." };
+        private static readonly string[] IconDevs = new[] { "....kkkk....", "...kddddk...", "..kddddddk..", "..kppppppk..", "..kpkppkpk..", "..kppppppk..", "...kppppk...", "..kkkppkkk..", ".krrrrrrrrk.", "krrrrrrrrrrk", "krrrrrrrrrrk", "kkkkkkkkkkkk" };
+        // Портрети команди: H — волосся, S — одяг (підставляються кольори кожного)
+        private static readonly string[] DevPortrait = new[] { "...kkkkkk...", "..kHHHHHHk..", ".kHHHHHHHHk.", ".kHppppppHk.", ".kpkppppkpk.", ".kppppppppk.", "..kppqqppk..", "...kppppk...", "..kSSSSSSk..", ".kSSSSSSSSk.", "kSSSSSSSSSSk", "kkkkkkkkkkkk" };
+        private static readonly (string Name, string Role, char Hair, char Shirt)[] Developers =
+        {
+            ("Никонюк Лев", "Тімлід, тестування", 'y', 'g'),
+            ("Бичковський Тимур", "Інтерфейс і графіка", 'd', 'r'),
+            ("Руденко Арсен", "Ігрова логіка", 'a', 't'),
+        };
         private static readonly string[] IconExit = new[] { ".kkkkkk.....", "kddddddk....", "kdaaaadkk...", "kdaaaadkwk..", "kdaaaakkwwk.", "kdayaawwwwwk", "kdaaaakkwwk.", "kdaaaadkwk..", "kdaaaadkk...", "kddddddk....", ".kkkkkk....." };
         private static readonly string[] IconFullscreen = new[] { "kkkkk..kkkkk", "kwwwk..kwwwk", "kwkkk..kkkwk", "kwk......kwk", "kkk......kkk", "............", "............", "kkk......kkk", "kwk......kwk", "kwkkk..kkkwk", "kwwwk..kwwwk", "kkkkk..kkkkk" };
         private static readonly string[] IconWindowed = new[] { "..kwk..kwk..", "..kwk..kwk..", "kkkwk..kwkkk", "kwwwk..kwwwk", "kkkkk..kkkkk", "............", "............", "kkkkk..kkkkk", "kwwwk..kwwwk", "kkkwk..kwkkk", "..kwk..kwk..", "..kwk..kwk.." };
@@ -541,9 +564,9 @@ namespace Fishing
             {
                 return;
             }
-            Button[] buttons = { btnPlay, btnJournal, btnShop, btnNewGame, btnExit };
-            int width = (int)(232 * scale), height = (int)(44 * scale), gap = (int)(8 * scale);
-            const float stack = 5 * 44 + 4 * 8; // висота стовпчика в логічних пікселях
+            Button[] buttons = { btnPlay, btnJournal, btnShop, btnNewGame, btnDevs, btnExit };
+            int width = (int)(232 * scale), height = (int)(38 * scale), gap = (int)(6 * scale);
+            const float stack = 6 * 38 + 5 * 6; // висота стовпчика в логічних пікселях
             int top = (int)((122 + stack / 2) * ViewScale - stack / 2 * scale);
             for (int i = 0; i < buttons.Length; i++)
             {
@@ -798,6 +821,7 @@ namespace Fishing
             pnlGame.Visible = false;
             pnlJournal.Visible = false;
             pnlShop.Visible = false;
+            pnlDevs.Visible = false;
             panel.Visible = true;
             btnMenu.Visible = panel != pnlMenu;
             if (panel == pnlJournal)
@@ -808,7 +832,7 @@ namespace Fishing
             {
                 pnlGame.BackColor = GameWaterColor(player.CurrentLocationId);
             }
-            if (panel == pnlJournal || panel == pnlShop)
+            if (panel == pnlJournal || panel == pnlShop || panel == pnlDevs)
             {
                 panel.Invalidate();
             }
@@ -882,7 +906,7 @@ namespace Fishing
                 e.Handled = true;
                 ToggleFullscreen();
             }
-            else if (e.KeyCode == Keys.Escape && (pnlGame.Visible || pnlJournal.Visible || pnlShop.Visible))
+            else if (e.KeyCode == Keys.Escape && (pnlGame.Visible || pnlJournal.Visible || pnlShop.Visible || pnlDevs.Visible))
             {
                 e.Handled = true;
                 ReturnToMenu();
@@ -1393,6 +1417,8 @@ namespace Fishing
         private static readonly SolidBrush Ink = new SolidBrush(Color.FromArgb(24, 20, 37));
         private static readonly SolidBrush PanelFill = new SolidBrush(Color.FromArgb(205, 24, 20, 37));
         private static readonly SolidBrush PanelEdge = new SolidBrush(Color.FromArgb(139, 155, 180));
+        private static readonly SolidBrush Skin = new SolidBrush(Color.FromArgb(244, 196, 150));
+        private static readonly SolidBrush SkinShade = new SolidBrush(Color.FromArgb(214, 150, 110));
         private static readonly SolidBrush Parchment = new SolidBrush(Color.FromArgb(234, 212, 170));
         private static readonly SolidBrush ParchmentDark = new SolidBrush(Color.FromArgb(228, 166, 114));
         private static readonly SolidBrush Wood = new SolidBrush(Color.FromArgb(184, 111, 80));
@@ -2041,6 +2067,54 @@ namespace Fishing
 
         private static readonly SolidBrush ParchmentShade = new SolidBrush(Color.FromArgb(206, 190, 160));
         private static readonly SolidBrush StatLine = new SolidBrush(Color.FromArgb(190, 160, 120));
+
+        private void PnlDevs_Paint(object sender, PaintEventArgs e)
+        {
+            // Екран «Розробники»: та сама стіна з дощок і вивіска, картка-пергамент на кожного члена команди
+            Graphics g = e.Graphics;
+            g.ScaleTransform(ViewScale, ViewScale);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.None;
+            g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+
+            float width = pnlDevs.ClientSize.Width / ViewScale;
+            float height = pnlDevs.ClientSize.Height / ViewScale;
+            float aw = (float)Math.Floor(width / Px);
+            DrawPlankWall(g, width, height);
+
+            float signX = (float)Math.Round(aw / 2 - 55);
+            PixelRect(g, Nail, signX + 10, 0, 1, 3);
+            PixelRect(g, Nail, signX + 99, 0, 1, 3);
+            DrawPixelPanel(g, ArtRect(signX, 3, 110, 16), PlankLight, Ink, Wood, PlankShade);
+            DrawPixelString(g, "Розробники", TextTitle, Cream, ArtRect(signX, 3, 110, 16));
+            DrawPixelString(g, "Команда $win$", TextBody, Cream, new RectangleF(0, 20 * Px, width, 18));
+
+            // Три картки в ряд по центру
+            const float cardW = 116, cardH = 124, cardGap = 12, cardY = 40;
+            float left = (float)Math.Round((aw - (Developers.Length * cardW + (Developers.Length - 1) * cardGap)) / 2);
+            for (int i = 0; i < Developers.Length; i++)
+            {
+                var dev = Developers[i];
+                float ax = left + i * (cardW + cardGap);
+                DrawPixelPanel(g, ArtRect(ax, cardY, cardW, cardH), Parchment, WoodDark, FloatWhite, ParchmentDark);
+
+                var colors = new Dictionary<char, Brush>(ButtonIconColors)
+                {
+                    ['H'] = ButtonIconColors[dev.Hair],
+                    ['S'] = ButtonIconColors[dev.Shirt],
+                    ['p'] = Skin,
+                    ['q'] = SkinShade,
+                };
+                const int portraitScale = 4;
+                float px = ax + (float)Math.Round((cardW - DevPortrait[0].Length * portraitScale) / 2);
+                PixelSpriteScaled(g, DevPortrait, colors, px, cardY + 10, portraitScale);
+
+                DrawPixelString(g, dev.Name, TextBody, CardText, ArtRect(ax + 2, cardY + 66, cardW - 4, 14), true);
+                DrawPixelString(g, dev.Role, TextBody, CardSubText, ArtRect(ax + 2, cardY + 86, cardW - 4, 26), true);
+            }
+
+            DrawPixelString(g, "Версія 1.1.0  ·  шрифт Tiny5, ліцензія OFL", TextBody, Cream,
+                new RectangleF(0, (cardY + cardH + 10) * Px, width, 20));
+        }
 
         private void PnlJournal_Paint(object sender, PaintEventArgs e)
         {
