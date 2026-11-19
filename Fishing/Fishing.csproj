@@ -12,6 +12,7 @@
     <FileAlignment>512</FileAlignment>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
     <Deterministic>true</Deterministic>
+    <ApplicationIcon>Assets\Icons\app.ico</ApplicationIcon>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <PlatformTarget>AnyCPU</PlatformTarget>
@@ -77,6 +78,9 @@
       <DependentUpon>Form1.cs</DependentUpon>
     </EmbeddedResource>
     <!-- Графіка гри (картка 16): вбудована в .exe, завантажується через LoadEmbeddedImage -->
+    <EmbeddedResource Include="Assets\Fonts\Tiny5-Regular.ttf">
+      <LogicalName>Fishing.Assets.Fonts.Tiny5-Regular.ttf</LogicalName>
+    </EmbeddedResource>
     <EmbeddedResource Include="Assets\Backgrounds\bg_lake.png">
       <LogicalName>Fishing.Assets.Backgrounds.bg_lake.png</LogicalName>
     </EmbeddedResource>
@@ -164,6 +168,8 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="App.config" />
+    <None Include="Assets\Icons\app.ico" />
+    <None Include="Assets\Fonts\OFL.txt" />
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-</Project>
+</Project>
